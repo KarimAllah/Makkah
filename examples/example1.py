@@ -10,9 +10,16 @@ bus = SimpleBus("simple_bus")
 timer = SimpleTimer("simple_timer")
 
 bus.attach_to(timer, TIMER_IRQ, 5)
-timer.start()
+bus.attach_to(timer, TIMER_IRQ, 6)
+
+ic = SimpleInterruptController("simple_ic")
+
+ic.attach_to(bus, 5, 10)
+ic.attach_to(bus, 6, 11)
+ic.enable_all()
+ic.mask_irq(10)
 
 consumer = SimpleConsumer("simple_consumer")
+consumer.attach_to(ic, 0, 6)
 
-# Will cause the consumer's interrupt_triggered with IRQ '6' when IRQ '6' is raised in bus.
-consumer.attach_to(bus, 5, 6)
+timer.start()

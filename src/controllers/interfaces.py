@@ -15,14 +15,12 @@ class AbstractInterruptProducer(object):
             consumers = [consumer for _, consumer in self.irq_consumers_map[irq_number]]
             
             if interrupt_consumer in consumers:
-                self.logger.warn("Interrupt Consumer (%s) is already registered for this interrupt number (%s). Just replacing the returned IRQ number to (%s)", interrupt_consumer.name, irq_number, returned_irq)
                 for entry in self.irq_consumers_map[irq_number]:
-                    if entry[1] == interrupt_consumer:
-                        entry[0] = returned_irq
-                        break
-                return
+                    if entry[0] == returned_irq and entry[1] == interrupt_consumer:
+                        self.logger.warn("Interrupt Consumer (%s) is already registered for this interrupt number (%s) with the same returned IRQ (%s)", interrupt_consumer.name, irq_number, returned_irq)
+                        return
             
-        self.irq_consumers_map[irq_number].append((returned_irq, interrupt_consumer))
+        self.irq_consumers_map[irq_number].append([returned_irq, interrupt_consumer])
     
     def unregister_interrupt_consumer(self, interrupt_consumer, irq_number=None):
         if irq_number:

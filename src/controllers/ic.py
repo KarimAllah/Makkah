@@ -13,16 +13,16 @@ class SimpleInterruptController(AbstractInterruptConsumer, AbstractInterruptProd
         # list of irq_numbers
         self.fiq_producers = [] 
         
-        self.mask_all = True
+        self.all_masked = True
         self.masked_irqs = []
         
         self.current_priority = 9 # We've 10 levels from (0 =>> 9)    
     
     def enable_all(self):
-        self.mask_all = False
+        self.all_masked = False
     
     def mask_all(self):
-        self.mask_all = True
+        self.all_masked = True
         
     def mask_irq(self, irq_num):
         if irq_num in self.masked_irqs:
@@ -44,25 +44,21 @@ class SimpleInterruptController(AbstractInterruptConsumer, AbstractInterruptProd
         self.current_priority = priority
     
     # Interrupt consumer routines.
-    def interrupt_triggered(self, unique_id):
-        try:
-            irq_number = super(SimpleInterruptController, self).resolve_id(unique_id)
-        except KeyError:
-            self.logger.warn("No interrupt mapped to this interrupt line (%s)", unique_id)
-            return
-        
-        if self.mask_all:
+    def interrupt_triggered(self, returned_irq):
+        if returned_irq > 99:
+            self.logger.warn("Interrupt is out of range ( 0 => 99 )")
+        elif self.all_masked:
             self.logger.info("Interrupts are masked")
-        elif irq_number in self.masked_irqs:
-            self.logger.info("Interrupt number (%s) is masked", irq_number)
-        elif (irq_number / 10) > self.current_priority:
-            self.logger.info("Interrupt number (%s) is ignored, current priority level (%s)", irq_number, self.current_priority)
+        elif returned_irq in self.masked_irqs:
+            self.logger.info("Interrupt number (%s) is masked", returned_irq)
+        elif (returned_irq / 10) > self.current_priority:
+            self.logger.info("Interrupt number (%s) is ignored, current priority level (%s)", returned_irq, self.current_priority)
         else:
-            if irq_number in self.fiq_producers:
-                self.logger.info("Triggering a fast interrupt (FIQ)")
+            if returned_irq in self.fiq_producers:
+                self.logger.info("Triggering a fast interrupt (FIQ=%s)", returned_irq)
                 super(SimpleInterruptController, self).trigger_interrupt(1)
             else:
-                self.logger.info("Triggering a normal interrupt (IRQ)")
+                self.logger.info("Triggering a normal interrupt (IRQ=%s)", returned_irq)
                 super(SimpleInterruptController, self).trigger_interrupt(0)
 
     # Interrupt producer routines.
@@ -73,8 +69,8 @@ class SimpleInterruptController(AbstractInterruptConsumer, AbstractInterruptProd
             self.logger.warn("Only interrupt number 0 or 1 are available")
             return
         
-        self._register_interrupt_consumer(interrupt_consumer, irq_number, returned_irq)
+        super(SimpleInterruptController, self).register_interrupt_consumer(interrupt_consumer, irq_number, returned_irq)
         
     def unregister_interrupt_consumer(self, interrupt_consumer, irq_number=None):
-        self._unregister_interrupt_consumer(interrupt_consumer, irq_number)
+        super(SimpleInterruptController, self).unregister_interrupt_consumer(interrupt_consumer, irq_number)
         
