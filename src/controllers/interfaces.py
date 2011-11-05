@@ -1,6 +1,5 @@
 import logging
-from uuid import uuid1
-    
+
 class AbstractInterruptProducer(object):
     def __init__(self, name):
         self.name = name
