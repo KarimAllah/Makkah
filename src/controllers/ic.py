@@ -39,7 +39,23 @@ class SimpleInterruptController(AbstractInterruptConsumer, AbstractInterruptProd
         
         self.logger.info("Enabling interrupt number (%s)", irq_num)
         self.masked_irqs.remove(irq_num)
+    
+    def set_fiq(self, irq_num):
+        if irq_num in self.fiq_producers:
+            self.logger.warn("Interrupt number (%s) already tiggers FIQ", irq_num)
+            return
         
+        self.logger.info("Setting interrupt number (%s) to trigger FIQ", irq_num)
+        self.fiq_producers.append(irq_num)
+    
+    def unset_fiq(self, irq_num):
+        if irq_num not in self.fiq_producers:
+            self.logger.warn("Interrupt number (%s) doesn't tigger FIQ", irq_num)
+            return
+        
+        self.logger.info("Interrupt number (%s) now triggers IRQ instead of FIQ", irq_num)
+        self.fiq_producers.remove(irq_num)
+
     def set_priority(self, priority):
         self.current_priority = priority
     
