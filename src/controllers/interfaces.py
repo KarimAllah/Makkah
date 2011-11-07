@@ -63,3 +63,47 @@ class AbstractInterruptConsumer(object):
     #override
     def interrupt_triggered(self, returned_irq):
         self.logger.info("Interrupt number (%s) was triggered", returned_irq)
+        
+class AbstractAddressableObject(object):
+    def __init__(self, wordsize= 4, multi_targets=False):
+        self.slaves = []
+        self.regions_map = []
+        self.word_size = wordsize
+    
+    def attach_slave(self, addressable_object, start_addr, end_addr, offset = 0):
+        self.slaves.append((start_addr*1024, end_addr * 1024, offset * 1024, addressable_object))
+             
+    def _serve_region(self, start, end):
+        if start > end:
+            start, end = end, start
+        self.regions_map.append((start * 1024, end * 1024))
+    
+    def read(self, address):
+        for start, end in self.regions_map:
+            if start <= address < end:
+                return self._read(address)
+                
+        for start, end, offset, slave in self.slaves:
+            if start <= address < end:
+                return slave.read(address - start + offset)
+            
+        self.logger.warn("Reading out of range address (%s)", address)
+    
+    def _read(self, address):
+        self.logger.info("Reading from address (%s)", address)
+    
+    def write(self, address, value):
+        for start, end in self.regions_map:
+            if start <= address < end:
+                self._write(address, value)
+                return
+                
+        for start, end, offset, slave in self.slaves:
+            if start <= address < end:
+                slave.write(address - start + offset, value)
+                return
+        
+        self.logger.warn("Writing an out of range address (%s)", address)
+        
+    def _write(self, address, value):
+        self.logger.info("Writing value (%s) to address (%s)", value, address)
