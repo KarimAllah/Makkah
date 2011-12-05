@@ -1,26 +1,74 @@
-import ctypes
-import struct
+from ctypes import c_uint32
 import logging
 
-from controllers.interfaces import AbstractAddressableObject
+from controllers.interfaces import AbstractBankedAddressableObject,\
+    AbstractBankedAddressableObjectProxy
+from controllers.exceptions.memory_exceptions import ReadOnlyMemory
 
-class SimpleMemory(AbstractAddressableObject):
-    def __init__(self, name, memory_size, endiannes, word_size):
-        AbstractAddressableObject.__init__(self)
-        
+
+class SimpleMemory(AbstractBankedAddressableObject):
+    def __init__(self, name, memory_size, endiannes):
+        AbstractBankedAddressableObject.__init__(self)
+        self.logger = logging.getLogger(name)    
         self._size = memory_size * 1024
-        self._serve_region(0, memory_size)
-        self._struct = struct.Struct("I")
-        self._memory = ctypes.create_string_buffer(self._size)
-        self.logger = logging.getLogger(name)
+        self._serve_region(0, self._size)
+        self._memory = (c_uint32 * self._size)()
         
     def _read(self, address):
         address = address & ~3
-        value = self._struct.unpack_from(self._memory, address)[0]
+        value = self._memory[address]
         self.logger.info("Reading value (%s) from address (%s)", value, address)
-        return value
+        return c_uint32(value)
     
     def _write(self, address, value):
         self.logger.info("Writing value (%s) to address (%s)", value, address)
         address = address & ~3
-        self._struct.pack_into(self._memory, address, value)
+        self._memory[address] = value.value
+
+
+class SimpleROM(SimpleMemory):
+    def __init__(self, name, memory_size, endiannes):
+        SimpleMemory.__init__(self, name, memory_size, endiannes)
+    
+    def _write(self, address, value):
+        raise ReadOnlyMemory(address)
+    
+    def _init_write(self, address, value):
+        super(SimpleROM, self)._write(address, value)
+        
+
+
+class SimpleBankedMemory(AbstractBankedAddressableObject):
+    def __init__(self, name, memory_size, endiannes):
+        AbstractBankedAddressableObject.__init__(self)
+        self.logger = logging.getLogger(name)    
+        self._size = memory_size * 1024
+        self._serve_region(0, self._size)
+        self._memory = (c_uint32 * self._size)()
+        
+    def _read(self, address, bank=0):
+        address = address & ~3
+        value = self._memory[address]
+        self.logger.info("Reading value (%s) from address (%s)", value, address)
+        return c_uint32(value)
+    
+    def _write(self, address, value, bank=0):
+        self.logger.info("Writing value (%s) to address (%s)", value, address)
+        address = address & ~3
+        self._memory[address] = value.value
+        
+class SimpleMMU(AbstractBankedAddressableObjectProxy):
+    def __init__(self, name):
+        AbstractBankedAddressableObjectProxy.__init__(self)
+        self.logger = logging.getLogger(name)
+        self.ttb = 0x0
+        
+    # Set translation table base.
+    def set_ttb(self, address):
+        self.ttb = address
+        
+    def resolve_address(self, vaddress):
+        if self.translation_enabled:
+            return self.raw_read(self.ttb + ((vaddress >> 10) & ~3))
+        else:
+            return vaddress

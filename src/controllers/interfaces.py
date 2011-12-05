@@ -1,4 +1,7 @@
 import logging
+from controllers.exceptions.memory_exceptions import BankNotFoundError,\
+    OutOfRangeError
+import global_env
 
 class AbstractInterruptProducer(object):
     def __init__(self, name):
@@ -63,47 +66,139 @@ class AbstractInterruptConsumer(object):
     #override
     def interrupt_triggered(self, returned_irq):
         self.logger.info("Interrupt number (%s) was triggered", returned_irq)
-        
-class AbstractAddressableObject(object):
+
+class AbstractBankedAddressableObject(object):
     def __init__(self, wordsize= 4, multi_targets=False):
-        self.slaves = []
-        self.regions_map = []
+        self.slaves = {}
+        self.regions_map = {}
         self.word_size = wordsize
     
-    def attach_slave(self, addressable_object, start_addr, end_addr, offset = 0):
-        self.slaves.append((start_addr*1024, end_addr * 1024, offset * 1024, addressable_object))
+    def attach_slave(self, addressable_object, start_addr, end_addr, offset = 0, bank="default"):
+        bucket = self.slaves.get(bank, None)
+        if not bucket:
+            self.slaves[bank] = []
+            
+        self.slaves[bank].append((start_addr, end_addr, offset, addressable_object))
              
-    def _serve_region(self, start, end):
+    def _serve_region(self, start, end, bank="default"):
+        bucket = self.regions_map.get(bank, None)
+        if not bucket:
+            self.regions_map[bank] = []
+            
         if start > end:
             start, end = end, start
-        self.regions_map.append((start * 1024, end * 1024))
+
+        self.regions_map[bank].append((start, end))
     
-    def read(self, address):
-        for start, end in self.regions_map:
-            if start <= address < end:
-                return self._read(address)
-                
-        for start, end, offset, slave in self.slaves:
-            if start <= address < end:
-                return slave.read(address - start + offset)
+    def read(self, address, bank="default", implicit=False):
+        bucket = self.regions_map.get(bank, None)
+        if not bucket and not implicit:
+            raise BankNotFoundError(bank)
+        elif not bucket and implicit:
+            bucket = self.regions_map.get("default", None)
+
+        if bucket:
+            for start, end in bucket:
+                if start <= address < end:
+                    return self._read(address)
             
-        self.logger.warn("Reading out of range address (%s)", address)
-    
-    def _read(self, address):
-        self.logger.info("Reading from address (%s)", address)
-    
-    def write(self, address, value):
-        for start, end in self.regions_map:
+        bucket = self.slaves.get(bank, None)
+        if not bucket and not implicit:
+            raise BankNotFoundError(bank)
+        elif not bucket and implicit:
+            bucket = self.slaves.get("default", None)
+            if not bucket:
+                raise BankNotFoundError
+            
+        for start, end, offset, slave in bucket:
             if start <= address < end:
-                self._write(address, value)
-                return
+                return slave.read(address - start + offset, bank, implicit)
+        
+        raise OutOfRangeError(address, bank)
+
+    #override
+    def _read(self, address, bank="default"):
+        self.logger.info("Reading from address (%s) through bank (%s)", address, bank)
+    
+    def write(self, address, value, bank="default", implicit=False):
+        bucket = self.regions_map.get(bank, None)
+        if not bucket and not implicit:
+            raise BankNotFoundError(bank)
+        elif not bucket and implicit:
+            bucket = self.regions_map.get("default", None)
+
+        if bucket:
+            for start, end in bucket:
+                if start <= address < end:
+                    self._write(address, value)
+                    return
+        
+        bucket = self.slaves.get(bank, None)
+        if not bucket and not implicit:
+            raise BankNotFoundError(bank)
+        elif not bucket and implicit:
+            bucket = self.slaves.get("default", None)
+            if not bucket:
+                raise BankNotFoundError
                 
-        for start, end, offset, slave in self.slaves:
+        for start, end, offset, slave in bucket:
             if start <= address < end:
-                slave.write(address - start + offset, value)
+                slave.write(address - start + offset, value, bank, implicit)
                 return
         
-        self.logger.warn("Writing an out of range address (%s)", address)
+        raise OutOfRangeError(address, bank)
         
-    def _write(self, address, value):
-        self.logger.info("Writing value (%s) to address (%s)", value, address)
+    #override
+    def _write(self, address, value, bank="default" ):
+        self.logger.info("Writing value (%s) to address (%s) through bank (%s)", value, address, bank)
+    
+        
+class AbstractImplicitBankedAddressableObject(AbstractBankedAddressableObject):
+    def __init__(self, wordsize= 4, multi_targets=False):
+        self.slaves = {}
+        self.regions_map = {}
+        self.word_size = wordsize
+        
+    def read(self, address):
+        bank = global_env.THREAD_ENV.engine_id
+        return super(AbstractImplicitBankedAddressableObject, self).read(address, bank, True)
+        
+    def write(self, address, value):
+        bank = global_env.THREAD_ENV.engine_id
+        super(AbstractImplicitBankedAddressableObject, self).write(address, value, bank, True)
+
+
+class AbstractBankedAddressableObjectProxy(AbstractBankedAddressableObject):
+    def __init__(self, wordsize = 4, multi_targets=False):
+        AbstractBankedAddressableObject.__init__(self, wordsize, multi_targets)
+        self.translation_enabled = False
+    
+    def read(self, vaddress, bank=0):
+        address = self.resolve_address(vaddress, bank)
+        value = super(AbstractBankedAddressableObjectProxy, self).read(address)
+        self.logger.info("Reading value (%s) from (vaddress=%s, address=%s) through bank (%s)", value, vaddress, address, bank)
+        return value
+    
+    def write(self, vaddress, value, bank=0):
+        address = self.resolve_address(vaddress, bank)
+        self.logger.info("Writing value (%s) to (vaddress=%s,address=%s) through bank (%s)", value, vaddress, address, bank)
+        super(AbstractBankedAddressableObjectProxy, self).write(address, value, bank)
+        
+    
+    def raw_read(self, address, bank=0):
+        value = super(AbstractBankedAddressableObjectProxy, self).read(address, bank)
+        self.logger.info("Raw reading value (%s) from address (%s) through bank (%s)", value, address, bank)
+        return value
+    
+    def raw_write(self, address, value, bank=0):
+        self.logger.info("Raw writing value (%s) to address (%s) through bank (%s)", value, address, bank)
+        super(AbstractBankedAddressableObjectProxy, self).write(address, value, bank)
+    
+    def resolve_address(self, vaddress, bank=0):
+        return vaddress
+    
+    def enable_proxy(self):
+        self.translation_enabled = True
+    
+    def disable_proxy(self):
+        self.translation_enabled = False
