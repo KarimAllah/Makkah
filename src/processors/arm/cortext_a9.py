@@ -6,6 +6,13 @@ from controllers.interfaces import AbstractInterruptConsumer
 
 INITIAL_IP = c_uint32(0x0)
 CPSR_RESET = c_uint32(0x0)
+MIDR_RESET = c_uint32(0x412FC092)
+
+class NotImplementedInstructionSet(Exception):
+    pass
+
+class NoRegisterFound(Exception):
+    pass
 
 class InvalidInstructionOpCode(Exception):
     pass
@@ -21,6 +28,38 @@ class Unpredictable(Exception):
 
 class AccessViolation(Exception):
     pass
+
+class TranslationFault(Exception):
+    def __init__(self, domain):
+        self.domain
+        
+class PageTranslationFault(Exception):
+    def __init__(self, domain):
+        self.domain
+        
+class SectionTranslationFault(Exception):
+    def __init__(self, domain):
+        self.domain
+
+class AccessFlagFault(Exception):
+    def __init__(self, domain):
+        self.domain
+        
+class SectionPermissionFault(Exception):
+    def __init__(self, domain):
+        self.domain
+        
+class PagePermissionFault(Exception):
+    def __init__(self, domain):
+        self.domain
+        
+class SectionDomainFault(Exception):
+    def __init__(self, domain):
+        self.domain
+
+class PageDomainFault(Exception):
+    def __init__(self, domain):
+        self.domain
 
 class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     # Masks
@@ -57,8 +96,8 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     LDR_IMMEDIATE_RN        = 0x000F0000
     LDR_IMMEDIATE_RN_SHIFT  = 16
     LDR_IMMEDIATE_P         = 0x01000000
-    LDR_IMMEDIATE_W         = 0x00800000
-    LDR_IMMEDIATE_U         = 0x00200000
+    LDR_IMMEDIATE_W         = 0x00200000
+    LDR_IMMEDIATE_U         = 0x00800000
     
     LDR_LITERAL_OP_MASK     = 0x0F7F0000
     LDR_LITERAL_OP          = 0x051F0000
@@ -103,6 +142,10 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     BL_OP                   = 0x0B000000
     BL_IMM                  = 0x00FFFFFF
     
+    BX_OP_MASK              = 0x0FFFFFF0
+    BX_OP                   = 0x012FFF10
+    BX_RM                   = 0x0000000F
+    
     # ADD
     ADD_IMMEDIATE_OP_MASK   = 0x0FE00000
     ADD_IMMEDIATE_OP        = 0x02800000
@@ -140,6 +183,15 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     SUB_REGISTER_RM         = 0x0000000F
     SUB_REGISTER_S          = 0x00100000
     
+    SUB_IMMEDIATE_OP_MASK   = 0x0FE00000
+    SUB_IMMEDIATE_OP        = 0x02400000
+    SUB_IMMEDIATE_RN        = 0x000F0000
+    SUB_IMMEDIATE_RN_SHIFT  = 16
+    SUB_IMMEDIATE_RD        = 0x0000F000
+    SUB_IMMEDIATE_RD_SHIFT  = 12
+    SUB_IMMEDIATE_IMM       = 0x00000FFF
+    SUB_IMMEDIATE_S         = 0x001FFFFF
+
     # Bit
     BFC_OP_MASK             = 0x0FE0007F
     BFC_OP                  = 0x07C0001F
@@ -151,6 +203,13 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     BFC_RD_SHIFT            = 12
     
     # CMP
+    CMP_IMMEDIATE_OP_MASK   = 0x0FF0F000
+    CMP_IMMEDIATE_OP        = 0x03500000
+    CMP_IMMEDIATE_RN        = 0x000F0000
+    CMP_IMMEDIATE_RN_SHIFT  = 16
+    CMP_IMMEDIATE_IMM       = 0x00000FFF
+    
+    
     CMP_REGISTER_OP_MASK    = 0x0FF0FF10
     CMP_REGISTER_OP         = 0x01500000
     CMP_REGISTER_RN         = 0x000F0000
@@ -180,6 +239,69 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     MOV_REGISTER_RD         = 0x0000F000
     MOV_REGISTER_RD_SHIFT   = 12
     MOV_REGISTER_S          = 0x00100000
+    
+    LDM_OP_MASK             = 0x0FD00000
+    LDM_OP                  = 0x08900000
+    LDM_RN                  = 0x000F0000
+    LDM_RN_SHIFT            = 16
+    LDM_W                   = 0x00200000
+    LDM_REGISTERS           = 0x0000FFFF
+    
+    STM_OP_MASK             = 0x0FD00000
+    STM_OP                  = 0x08800000
+    STM_RN                  = 0x000F0000
+    STM_RN_SHIFT            = 16
+    STM_W                   = 0x00200000
+    STM_REGISTERS           = 0x0000FFFF
+    
+    # Test bitwise AND
+    TST_IMMEDIATE_OP_MASK   = 0x0FF0F000
+    TST_IMMEDIATE_OP        = 0x03100000
+    TST_IMMEDIATE_RN        = 0x000F0000
+    TST_IMMEDIATE_RN_SHIFT  = 16
+    TST_IMMEDIATE_IMM       = 0x00000FFF
+    
+    # MVN
+    MVN_IMMEDIATE_OP_MASK   = 0x0FEF0000
+    MVN_IMMEDIATE_OP        = 0x03E00000
+    MVN_IMMEDIATE_S         = 0x00100000
+    MVN_IMMEDIATE_RD        = 0x0000F000
+    MVN_IMMEDIATE_RD_SHIFT  = 12
+    MVN_IMMEDIATE_IMM       = 0x00000FFF
+    
+    MVN_REGISTER_SH_OP_MASK = 0x0FEF0090
+    MVN_REGISTER_SH_OP      = 0x01E00010
+    MVN_REGISTER_SH_S       = 0x00100000
+    MVN_REGISTER_SH_RD      = 0x0000F000
+    MVN_REGISTER_SH_RD_SHIFT= 12
+    MVN_REGISTER_SH_RS      = 0x00000F00
+    MVN_REGISTER_SH_RS_SHIFT= 8
+    MVN_REGISTER_SH_TYPE    = 0x00000060
+    MVN_REGISTER_SH_TYPE_SHIFT = 5
+    MVN_REGISTER_SH_RM      = 0x0000000F
+
+    # Bitwise Bit Clear
+    BIC_IMMEDIATE_OP_MASK   = 0x0FE00000
+    BIC_IMMEDIATE_OP        = 0x03C00000
+    BIC_IMMEDIATE_S         = 0x00100000
+    BIC_IMMEDIATE_RN        = 0x000F0000
+    BIC_IMMEDIATE_RN_SHIFT  = 16
+    BIC_IMMEDIATE_RD        = 0x0000F000
+    BIC_IMMEDIATE_RD_SHIFT  = 12
+    BIC_IMMEDIATE_IMM       = 0x00000FFF
+    
+    BIC_REGISTER_SH_OP_MASK = 0x0FE00090
+    BIC_REGISTER_SH_OP      = 0x01C00010
+    BIC_REGISTER_SH_S       = 0x00100000
+    BIC_REGISTER_SH_RN      = 0x000F0000
+    BIC_REGISTER_SH_RN_SHIFT= 16
+    BIC_REGISTER_SH_RD      = 0x0000F000
+    BIC_REGISTER_SH_RD_SHIFT= 12
+    BIC_REGISTER_SH_RS      = 0x00000F00
+    BIC_REGISTER_SH_RS_SHIFT= 8
+    BIC_REGISTER_SH_TYPE    = 0x00000060
+    BIC_REGISTER_SH_TYPE_SHIFT= 5
+    BIC_REGISTER_SH_RM      = 0x0000000F
     
     # Logical Shift
     LSL_IMMEDIATE_OP_MASK   = 0x0FEF0070
@@ -223,10 +345,25 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     ORR_REGISTER_TYPE_SHIFT = 5
     ORR_REGISTER_S          = 0x00100000
     
+    ORR_REGISTER_SH_OP_MASK = 0x0FE00090
+    ORR_REGISTER_SH_OP      = 0x01800010
+    ORR_REGISTER_SH_S       = 0x00100000
+    ORR_REGISTER_SH_RN      = 0x000F0000
+    ORR_REGISTER_SH_RN_SHIFT= 16
+    ORR_REGISTER_SH_RD      = 0x0000F000
+    ORR_REGISTER_SH_RD_SHIFT= 12
+    ORR_REGISTER_SH_RS      = 0x00000F00
+    ORR_REGISTER_SH_RS_SHIFT= 8
+    ORR_REGISTER_SH_TYPE    = 0x00000060
+    ORR_REGISTER_SH_TYPE_SHIFT= 5
+    ORR_REGISTER_SH_RM      = 0x0000000F
+    
+    # SVC
     SVC_OP_MASK             = 0x0F000000
     SVC_OP                  = 0x0F000000
     SVC_IMM                 = 0x00FFFFFF
     
+    # Move to coprocessor from register
     MCR_OP_MASK             = 0x0E100010
     MCR_OP                  = 0x0E000010
     MCR_OPC1                = 0x00E00000
@@ -241,7 +378,59 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     MCR_OPC2_SHIFT          = 5
     MCR_CRM                 = 0x0000000F
     
+    # Move to register from coprocessor
+    MRC_OP_MASK             = 0x0F100010
+    MRC_OP                  = 0x0E100010
+    MRC_OPC1                = 0x00E00000
+    MRC_OPC1_SHIFT          = 21
+    MRC_CRN                 = 0x000F0000
+    MRC_CRN_SHIFT           = 16
+    MRC_RT                  = 0x0000F000
+    MRC_RT_SHIFT            = 12
+    MRC_COPROC              = 0x00000F00
+    MRC_COPROC_SHIFT        = 8
+    MRC_OPC2                = 0x000000E0
+    MRC_OPC2_SHIFT          = 5
+    MRC_CRM                 = 0x0000000F
     
+    # Move to register from special register
+    MRS_OP_MASK             = 0x0FBF0FFF
+    MRS_OP                  = 0x010F0000
+    MRS_RD                  = 0x0000F000
+    MRS_RD_SHIFT            = 12
+    MRS_READ_SAVED          = 0x00400000
+    
+    MRS_USER_MASK           = 0xF80F0000
+    MRS_SVC_MASK            = 0xFF0FFFFF
+    
+    # Move to special register from arm core register
+    MSR_REGISTER_OP_MASK    = 0x0FB0FFF0
+    MSR_REGISTER_OP         = 0x0120F000
+    MSR_REGISTER_MASK       = 0x000F0000
+    MSR_REGISTER_MASK_SHIFT = 16
+    MSR_REGISTER_RN         = 0x0000000F
+    MSR_REGISTER_R          = 0x00400000
+    
+    # PUSH
+    PUSH_OP1_MASK           = 0x0FFF0000
+    PUSH_OP1                = 0x092D0000
+    PUSH_OP1_REGISTERS      = 0x0000FFFF
+    
+    PUSH_OP2_MASK           = 0x0000F000
+    PUSH_OP2                = 0x052D0004
+    PUSH_OP2_RT             = 0x0000F000
+    PUSH_OP2_RT_SHIFT       = 12
+    
+    POP_OP1_MASK            = 0x0FFF0000
+    POP_OP1                 = 0x08BD0000
+    POP_OP1_REGISTERS       = 0x0000FFFF
+    
+    POP_OP2_MASK            = 0x0FFF0FFF
+    POP_OP2                 = 0x049D0004
+    POP_OP2_RT              = 0x0000F000
+    POP_OP2_RT_SHIFT        = 12
+    
+
     def __init__(self, name, system_bus, security_extensions=True):
         threading.Thread.__init__(self)
         # A word is 4-bytes long.
@@ -249,19 +438,818 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
         self.name = name
         self.system_bus = system_bus
         self.word_size = 4
-        self.op_handlers = {}
         self.received_interrupts = {}
         global_env.THREAD_ENV.engine_id = name
         self.HaveSecurityExt = security_extensions
         
         self.init_registers()
         self.init_interrupts()
+        self.init_ophandlers()
+    
+    PAGEDIR_TYPE_MASK   = 0x00003
+    DOMAIN_MASK         = 0x1E0
+    DOMAIN_MASK_SHIFT   = 5
+    def _mmu_translate(self, vaddress, read_access=True, instruction=False):
+        if not (self._SCTLR().value & self.SCTLR_M):
+            return vaddress
+
+        #TODO
+        # 1- lookup instruction or data micro TLB using (vaddress + ASID + Security state in)
+        # 2- If not found, lookup main TLB using (vaddress + ASID + Security state in)
+        # 3- If not found, do a translation table walk.
+        n = self._TTBCR().value & self.TTBCR_N
+        tmp = vaddress & (((1 << n) - 1) << (31 - n))
+        
+        if tmp:
+            translation_base = self._TTBCR1().value & (((1 << 18) - 1) << 14)
+            table_index = vaddress & (((1 << 12) - 1) << 20)
+            tbi = translation_base + (table_index << 2)
+        else:
+            translation_base = self._TTBCR0().value & (((16 + n) - 1) << (14 - n)) 
+            table_index = vaddress & ((12 - n) << 20)
+            tbi = translation_base + (table_index << 2)
+            
+        pdte = self.system_bus.read(tbi).value # page directory table entry
+        pdte_type = pdte & self.PAGEDIR_TYPE_MASK # page directoy table entry type
+        
+        pte = None
+        domain = (pdte & self.DOMAIN_MASK) >> self.DOMAIN_MASK_SHIFT
+        secure = self._IsSecure()
+        if pdte_type == 1:
+            # pagetable
+            # NS
+            ns = pdte & 0x8
+            if (not secure) and (not ns):
+                raise PageTranslationFault(domain)
+            # page table base address
+            ptba = pdte & (~0x3FF)
+            # level 2 table index
+            l2ti = vaddress & (0xFF << 12)
+            tbi = ptba | (l2ti << 2)
+            # level 2 descriptor
+            pte = self.system_bus.read(tbi).value
+            if pte & 0x2:
+                # small page
+                # XN
+                xn = pte & 0x1
+                paddress = pte & (~0x3FF)
+            elif pte & 0x1:
+                # large page
+                # XN
+                xn = pte & 0x8000
+                paddress = pte & (~0xFFFF)
+            else:
+                raise PageTranslationFault(domain)
+        elif pdte_type == 2:
+            # XN
+            xn = pdte & 0x10 
+            if (pdte & 40000):
+                # supersection
+                # NS
+                ns = pdte & 0x40000
+                if (not secure) and (not ns):
+                    raise SectionTranslationFault(domain)
+                paddress = pdte & (~0xFFFFF)
+            else:
+                # section
+                # NS
+                ns = pdte & 0x40000
+                if (not secure) and (not ns):
+                    raise SectionTranslationFault(domain)
+                paddress = pdte & (~0xFFFFFF)
+        else:
+            raise SectionTranslationFault(domain)
+        
+        if xn and instruction:
+            if pte:
+                raise PagePermissionFault(domain)
+            raise SectionPermissionFault(domain)
+
+        dtype = self._DACR_domain_type(domain)
+        if (dtype == self.DACR_NACCESS) or (dtype == self.DACR_RESERVED):
+            if pte:
+                raise PageDomainFault()
+            raise SectionDomainFault(domain)
+        elif dtype == self.DACR_CLIENT:
+            if pte != None:
+                ap = (pte & 0x30) >> 4 
+                ap |= (pte & 0x200) >> 7 # 9 - 2
+            else:
+                ap = (pdte & 0x300) >> 10
+                ap |= (pdte & 0x4000) >> 13 # 15 - 2
+            
+            privileged = self._IsPrivilegedMode()
+            if ap == 0:
+                if pte:
+                    raise PagePermissionFault(domain)
+                raise SectionPermissionFault(domain)
+            elif ap == 1:
+                if not privileged:
+                    if pte:
+                        raise PagePermissionFault(domain)
+                    raise SectionPermissionFault(domain) 
+            elif ap == 2:
+                if not privileged and not read_access:
+                    if pte:
+                        raise PagePermissionFault(domain)
+                    raise SectionPermissionFault(domain)
+            elif ap == 3:
+                pass
+            elif ap == 4:
+                # reserver
+                pass
+            elif ap == 5:
+                if not privileged or (privileged and not read_access):
+                    if pte:
+                        raise PagePermissionFault(domain)
+                    raise SectionPermissionFault(domain)
+            elif ap == 6:
+                if not read_access:
+                    if pte:
+                        raise PagePermissionFault(domain)
+                    raise SectionPermissionFault(domain)
+            elif ap == 7:
+                if not read_access:
+                    if pte:
+                        raise PagePermissionFault(domain)
+                    raise SectionPermissionFault(domain)
+        
+        # If we're here then we passed all the checks.
+        return paddress
+
+    def mmu_read(self, vaddress, instruction=False):
+        fs = None
+        try:
+            paddress = self._mmu_translate(vaddress, instruction=instruction)
+        except SectionTranslationFault as ex:
+            fs = 0x5
+        except PageTranslationFault as ex:
+            fs = 0x7
+        except SectionDomainFault as ex:
+            fs = 0x9
+        except PageDomainFault as ex:
+            fs = 0xB
+        except SectionPermissionFault as ex:
+            fs = 0xD
+        except PagePermissionFault as ex:
+            fs = 0xF
+        
+        if fs:
+            if instruction:
+                self._IFAR().value = vaddress
+                self._IFSR().value = (fs & 0xF) | ((fs & 0x10) << 10)
+            else:
+                self._DFAR().value = vaddress
+                self._DFSR().value = ex.domain << 4 | (fs & 0xF) | ((fs & 0x10) << 10)
+        else:
+            return self.system_bus.read(paddress)
+        
+    def mmu_write(self, vaddress, value, instruction=False):
+        fs = None
+        try:
+            paddress = self._mmu_translate(vaddress, read_access=False, instruction=instruction)
+        except SectionTranslationFault as ex:
+            fs = 0x5
+        except PageTranslationFault as ex:
+            fs = 0x7
+        except SectionDomainFault as ex:
+            fs = 0x9
+        except PageDomainFault as ex:
+            fs = 0xB
+        except SectionPermissionFault as ex:
+            fs = 0xD
+        except PagePermissionFault as ex:
+            fs = 0xF
+        
+        if fs:
+            if instruction:
+                self._IFAR().value = vaddress
+                self._IFSR().value = (fs & 0xF) | ((fs & 0x10) << 10)
+            else:
+                self._DFAR().value = vaddress
+                self._DFSR().value = ex.domain << 4 | (fs & 0xF) | ((fs & 0x10) << 10) | (1 << 11)
+        else:
+            self.system_bus.write(paddress, value)
                 
     def fetch_next_op(self):
-        self.logger.info("Fetching next opcode from address (%s)", self.ip.value)
-        op = self.system_bus.read(self.ip.value)
+        self.logger.info("Fetching next opcode from address (%s)", hex(self.ip.value))
+        op = self.mmu_read(self.ip.value, instruction=True)
         return op.value
     
+    def init_ophandlers(self):
+        def def_LDR_LITERAL_OP(op):
+            # NOTE: Always write this before LDR_IMMEDIATE_OP
+            # LDR (literal)
+            add = ((op & self.LDR_LITERAL_U) != 0)
+            rt = (op & self.LDR_LITERAL_RT) >> self.LDR_LITERAL_RT_SHIT
+            imm = op & self.LDR_LITERAL_IMM
+            base = self.get_ip() & (~ 0x3)
+            address = (base + imm) if add else (base - imm)
+            data = self.mmu_read(address)
+            self.register_write(rt, data)
+            
+        def def_LDR_IMMEDIATE_OP(op):
+            # LDR (immediate, ARM)
+            rn = (op & self.LDR_IMMEDIATE_RN) >> self.LDR_IMMEDIATE_RN_SHIFT
+            rt = (op & self.LDR_IMMEDIATE_RT) >> self.LDR_IMMEDIATE_RT_SHIFT
+            imm = (op & self.LDR_IMMEDIATE_IMM)
+            
+            if rn == 0xF:
+                self.op_handlers['LDR_LITERAL_OP'](op)
+                return
+            
+            if not (op & self.LDR_IMMEDIATE_P) and op & self.LDR_IMMEDIATE_W:
+                #FIXME see LDRT
+                raise NotImplementedOpCode()
+            
+            if rn == 0xD and not (op & self.LDR_IMMEDIATE_P) and op & self.LDR_IMMEDIATE_U and not (op & self.LDR_IMMEDIATE_W) and imm == 0x4:
+                self.op_handlers['POP_OP2'](op)
+                return
+
+            index = (op & self.LDR_IMMEDIATE_P) != 0
+            add = (op & self.LDR_IMMEDIATE_U) != 1
+            wback = not (op & self.LDR_IMMEDIATE_P) and op & self.LDR_IMMEDIATE_W
+             
+            base = self.register_read(rn).value
+            offset_addr = (base + imm) if add else (base - imm)
+            address = offset_addr if index else base
+            data = self.mmu_read(address)
+            if wback:
+                self.register_write(rn, offset_addr)
+
+            self.register_write(rt, data)
+            
+        def def_STR_IMMEDIATE_OP(op):
+            p = op & self.STR_IMMEDIATE_P
+            w = op & self.STR_IMMEDIATE_W
+            u = op & self.STR_IMMEDIATE_U
+            rt = (op & self.STR_IMMEDIATE_RT) >> self.STR_IMMEDIATE_RT_SHIFT
+            rn = (op & self.STR_IMMEDIATE_RN) >> self.STR_IMMEDIATE_RN_SHIFT
+            imm = op & self.STR_IMMEDIATE_IMM
+            
+            if (not p) and w:
+                #FIXME see STRT
+                raise NotImplementedOpCode()
+            
+            if rn == 0xD and p and (not u) and w and imm == 0x4:
+                self.op_handlers['PUSH_OP2'](op)
+                return
+            
+            index = (p != 0)
+            add = (u != 0)
+            wback = (not p) or (w != 0)
+            
+            if wback and (rn == 15 or rn == rt):
+                raise Unpredictable()
+            
+            rn_value = self.register_read(rn).value
+            offset_addr = (rn_value + imm) if add else (rn_value - imm)
+            address = offset_addr if index else rn_value
+            self.mmu_write(address, self.register_read(rt))
+            
+            if wback:
+                self.register_write(rn, c_uint32(offset_addr))
+        
+        def def_STR_REGISTER_OP(op):
+            p = op & self.STR_REGISTER_P
+            u = op & self.STR_REGISTER_U
+            w = op & self.STR_REGISTER_W
+            type = (op & self.STR_REGISTER_TYPE) >> self.STR_REGISTER_TYPE_SHIFT
+            rm = op & self.STR_REGISTER_RM
+            imm = (op & self.STR_REGISTER_IMM) >> self.STR_REGISTER_IMM_SHIFT
+            rt = (op & self.STR_REGISTER_RT) >> self.STR_REGISTER_RT_SHIFT
+            rn = (op & self.STR_REGISTER_RN) >> self.STR_REGISTER_RN_SHIFT
+            
+            if (not p) and w:
+                #FIXME see STRT
+                raise NotImplementedOpCode()
+            
+            index = (p != 0)
+            add = (u != 0)
+            wback = (not p) or (w != 0)
+            shift_t, shift_n = self._DecodeImmShift(type, imm)
+            
+            if rm == 0xF:
+                raise Unpredictable()
+            
+            if wback and (rn == 15 or rn == rt):
+                raise Unpredictable()
+            
+            carry = self.cpsr.value & self.PROCESSOR_C and 1
+            offset = self._SHIFT(self.register_read(rm).value, shift_t, shift_n, carry)
+            rn_value = self.register_read(rn).value
+            offset_addr = (rn_value + offset) if add else (rn_value + offset)
+            address = offset_addr if index else rn_value
+            if rt == 0xF:
+                #FIXME see PCStoreValue
+                raise NotImplementedOpCode()
+            else:
+                data = self.register_read(rt)
+                
+            self.mmu_write(address, data)
+            if wback:
+                self.register_write(rn, c_uint32(offset_addr))
+                
+        def def_B_OP(op):
+            imm = self._SignExtend26to32((op & self.B_IMM) << 2)
+            self.set_ip(c_uint32(self.get_ip() + imm))
+
+        def def_BL_OP(op):
+            imm = self._SignExtend26to32((op & self.B_IMM) << 2)
+            lr = self.get_lr_link()
+            self.register_write(14, c_uint32(lr))
+            self.set_ip(c_uint32(self.get_ip() + imm))
+        
+        def def_BX_OP(op):
+            rm = op & self.BX_RM
+            address = self.register_read(rm)
+            self._BXWritePC(address)
+
+        def def_LDM_OP(op):
+            w = op & self.LDM_W
+            register_list = op & self.LDM_REGISTERS
+            bit_count = self._BitCount(register_list)
+            rn = (op & self.LDM_RN) >> self.LDM_RN_SHIFT
+            if w != 0 and rn == 0xD and bit_count >=2:
+                self.op_handlers['POP_OP1'](op)
+                return
+            
+            wback = (w != 0)
+            if rn == 0xF or bit_count < 1:
+                raise Unpredictable()
+            
+            rn_index = 1 << rn
+            if wback and (register_list & rn_index):
+                raise Unpredictable()
+            
+            address = self.register_read(rn).value
+            for i in range(15):
+                if register_list & (1 << i):
+                    self.register_write(i, self.mmu_read(address))
+                    address += 4
+                
+            if register_list & (1 << 15):
+                self._BXWritePC(self.mmu_read(address))
+
+            if wback:
+                self.register_write(rn, c_uint32(address))
+
+        def def_STM_OP(op):
+            w = op & self.LDM_W
+            register_list = op & self.STM_OP
+            bit_count = self._BitCount(register_list)
+            rn = (op & self.STM_RN) >> self.STM_RN_SHIFT
+            if rn == 0xF or bit_count < 1:
+                raise Unpredictable()
+            
+            wback = (w != 0)
+            address = self.register_read(rn).value
+            for i in range(15):
+                if register_list & (1 << i):
+                    #TODO:Check the reference for the branching here, not sure what it means !!
+                    #if rn == i and wback and 
+                    self.mmu_write(address, self.register_read(i))
+                    address += 4
+                
+            if register_list & (1 << 15):
+                # PCStoreValue
+                raise NotImplementedOpCode()
+            if wback:
+                self.register_write(rn, c_uint32(address))
+
+
+        def def_PUSH_OP1(op):
+            register_list = op & self.PUSH_OP1_REGISTERS
+            bit_count = self._BitCount(register_list)
+            if register_list & (1 << 13):
+                raise Unpredictable()
+
+            if bit_count < 2:
+                # see STMDB / STMFD
+                raise NotImplementedOpCode()
+            
+            address = self.register_read(13).value - (4 * bit_count)
+            for i in range(15):
+                if register_list & (1 << i):
+                    #TODO:Check the reference for the branching here, not sure what it means !!
+                    #if rn == i and wback and 
+                    self.mmu_write(address, self.register_read(i))
+                    address += 4
+            if register_list & (1 << 15):
+                # see PCStoreValue(pc)
+                raise NotImplementedOpCode()
+            
+            self.register_read(13).value -= (4 * bit_count)
+            
+        def def_PUSH_OP2(op):
+            rt = (op & self.PUSH_OP2_RT) >> self.PUSH_OP2_RT_SHIFT
+            if rt == 0xD:
+                raise Unpredictable()
+            if rt == 0xF:
+                # see PCStoreValue(pc)
+                raise NotImplementedOpCode()
+
+            address = self.register_read(13).value - 4
+            self.mmu_write(address, self.register_read(rt))
+            self.register_read(13).value -= 4
+            
+        def def_POP_OP1(op):
+            register_list = op & self.POP_OP1_REGISTERS
+            bit_count = self._BitCount(register_list)
+            if bit_count < 2:
+                self.op_handlers['LDM_OP'](op)
+                return
+            if register_list & (1 << 13):
+                raise Unpredictable()
+            
+            address = self.register_read(13).value
+            for i in range(15):
+                if register_list & (1 << i):
+                    #TODO:Check the reference for the branching here, not sure what it means !!
+                    #if rn == i and wback and 
+                    self.register_write(i, self.mmu_read(address))
+                    address += 4
+            
+            if register_list & (1 << 15):
+                self._BXWritePC(self.mmu_read(address))
+            
+            self.register_read(13).value += (4 * bit_count)
+            
+        def def_POP_OP2(op):
+            rt = (op & self.POP_OP2_RT) >> self.POP_OP2_RT_SHIFT
+            if rt == 0xD:
+                raise Unpredictable()
+            
+            address = self.register_read(13).value 
+            
+            if rt == 0xF:
+                self._BXWritePC(self.mmu_read(address))
+            else:
+                self.register_write(rt, self.mmu_read(address))
+            
+            self.register_read(13).value += 4
+
+        def def_CMP_REGISTER_OP(op):
+            rn = (op & self.CMP_REGISTER_RN) >> self.CMP_REGISTER_RN_SHIFT
+            rm = op & self.CMP_REGISTER_RM
+            type = (op & self.CMP_REGISTER_TYPE) >> self.CMP_REGISTER_TYPE_SHIFT
+            imm = (op & self.CMP_REGISTER_IMM) >> self.CMP_REGISTER_IMM_SHIFT
+            shift_t, shift_n = self._DecodeImmShift(type, imm)
+            carry = self.cpsr.value & self.PROCESSOR_C and 1
+            shifted = self._SHIFT(self.register_read(rm).value, shift_t, shift_n, carry)
+            complemented_shifted = c_uint32(-shifted).value
+            result, carry, overflow = self._AddWithCarry(self.register_read(rn).value, complemented_shifted, 0)
+            
+            self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+            self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+            self.cpsr.value |= carry and self.PROCESSOR_C
+            self.cpsr.value |= overflow and self.PROCESSOR_V
+        
+        def def_CMP_IMMEDIATE_OP(op):
+            imm = op & self.CMP_IMMEDIATE_IMM
+            imm = self._ARMExpandImm(imm)
+            rn = (op & self.CMP_IMMEDIATE_RN) >> self.CMP_IMMEDIATE_RN_SHIFT
+            result, carry, overflow = self._AddWithCarry(self.register_read(rn).value, self._NOT(imm), 1)
+            
+            self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+            self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+            self.cpsr.value |= carry and self.PROCESSOR_C
+            self.cpsr.value |= overflow and self.PROCESSOR_V
+        
+        def def_TST_IMMEDIATE_OP(op):
+            rn = (op & self.TST_IMMEDIATE_RN) >> self.TST_IMMEDIATE_RN_SHIFT
+            imm = op & self.TST_IMMEDIATE_IMM
+            carry = self.cpsr.value & self.PROCESSOR_C and 1
+            result, carry = self._ARMExpandImm_C(imm, carry)
+            
+            self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+            self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+            self.cpsr.value |= carry and self.PROCESSOR_C
+        
+        def def_MSR_REGISTER_OP(op):
+            #TODO:Support non-maskable interrupts
+            rn = op & self.MSR_REGISTER_RN
+            if rn == 0xF:
+                raise Unpredictable()
+            mask = (op & self.MSR_REGISTER_MASK) >> self.MSR_REGISTER_MASK_SHIFT
+            if mask == 0x0:
+                raise Unpredictable()
+            write_spsr = (op & self.MSR_REGISTER_R) != 0
+            privileged = self._IsPrivilegedMode()
+            mask = ((0x8 & mask) and 0xFF000000) | ((0x4 & mask) and 0x00FF0000) | ((0x2 & mask) and privileged and 0x0000FF00) | ((0x1 & mask) and privileged and 0x000000FF)
+            
+            secure = self._IsSecure()
+            if not secure:
+                scr = self._SCR().value
+                f = (scr & self.SCR_FW) == 0
+                a = (scr & self.SCR_AW) == 0
+                mask = (mask & ((f and 0xFFFFFFBF) & (a and 0xFFFFFEFF)))
+            before_mask = self.register_read(rn).value
+            after_mask = before_mask & mask
+            
+            value = self.cpsr.value
+            if privileged:
+                if write_spsr:
+                    MODE = value & self.PROCESSOR_MODE
+                    self.spsr_registers[MODE] = before_mask
+                else:
+                    unchanging_bits = value & self._NOT(mask)
+                    result = unchanging_bits | after_mask
+                    if (not secure) and (result & self.PROCESSOR_MODE) == self.processor_modes['monitor']:
+                        raise Unpredictable()
+                    self.cpsr.value = result
+            else:
+                unchanging_bits = value & self._NOT(mask)
+                self.cpsr.value = unchanging_bits | after_mask
+        
+        def def_MVN_IMMEDIATE_OP(op):
+            s = op & self.MVN_IMMEDIATE_S
+            set_flags = (s != 0)
+            rd = (op & self.MVN_IMMEDIATE_RD) >> self.MVN_IMMEDIATE_RD_SHIFT
+            imm = op & self.MVN_IMMEDIATE_IMM
+            carry = self.cpsr.value & self.PROCESSOR_C and 1
+            imm, carry = self._ARMExpandImm_C(imm, carry)
+            result = self._NOT(imm)
+            if rd == 0xF:
+                #TODO see ALUWritePC
+                raise NotImplementedOpCode()
+            else:
+                self.register_write(rd, c_uint32(result))
+                if set_flags:
+                    self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                    self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                    self.cpsr.value |= carry and self.PROCESSOR_C
+            
+        def def_MVN_REGISTER_SH_OP(op):
+            rd = (op & self.MVN_REGISTER_SH_RD) >> self.MVN_REGISTER_SH_RD_SHIFT
+            rs = (op & self.MVN_REGISTER_SH_RS) >> self.MVN_REGISTER_SH_RS_SHIFT
+            type = (op & self.MVN_REGISTER_SH_TYPE) >> self.MVN_REGISTER_SH_TYPE_SHIFT
+            rm = op & self.MVN_REGISTER_SH_RM
+            s = op & self.MVN_REGISTER_SH_S
+            set_flags = (s != 0)
+            shift_t = self._DecodeRegShift(type)
+            
+            if rd == 0xF or rm == 0xF or rs == 0xF:
+                raise Unpredictable()
+            
+            rs_value = self.register_read(rs).value
+            shift_n = rs_value & 0xFF
+            carry = self.cpsr.value & self.PROCESSOR_C and 1
+            shifted, carry = self._SHIFT_C(self.register_read(rm).value, shift_t, shift_n, carry)
+            result = self._NOT(shifted)
+            self.register_write(rd, c_uint32(result))
+            if set_flags:
+                self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                self.cpsr.value |= carry and self.PROCESSOR_C
+
+        def def_BIC_IMMEDIATE_OP(op):
+            rd = (op & self.BIC_IMMEDIATE_RD) >> self.BIC_IMMEDIATE_RD_SHIFT
+            rn = (op & self.BIC_IMMEDIATE_RN) >> self.BIC_IMMEDIATE_RN_SHIFT
+            imm = op & self.BIC_IMMEDIATE_IMM
+            s = op & self.BIC_IMMEDIATE_S
+            set_flags = (s != 0)
+            
+            if rd == 0xF and s:
+                #FIXME see SUBS PC, LR and related instructions
+                raise NotImplementedOpCode()
+            
+            carry = (self.cpsr.value & self.PROCESSOR_C) and 1
+            imm, carry = self._ARMExpandImm_C(imm, carry)
+            result = (self.register_read(rn).value & self._NOT(imm))
+            if rd == 0xF:
+                #FIXME ALUWritePC(result)
+                raise NotImplementedOpCode()
+            else:
+                self.register_write(rd, c_uint32(result))
+                if set_flags:
+                    self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                    self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                    self.cpsr.value |= carry and self.PROCESSOR_C
+
+        def def_MRS_OP(op):
+            rd = (op & self.MRS_RD) >> self.MRS_RD_SHIFT
+            read_spsr = ((op & self.MRS_READ_SAVED) != 0)
+            
+            value = self.cpsr.value
+            if self._IsPrivilegedMode():
+                if read_spsr:
+                    MODE = value & self.PROCESSOR_MODE
+                    value = self.spsr_registers[MODE]
+                
+                value &= self.MRS_SVC_MASK
+            else:
+                value &= self.MRS_USER_MASK
+            
+            self.register_write(rd, c_uint32(value))
+
+        def def_ORR_REGISTER_OP(op):
+            imm = (op & self.ORR_REGISTER_IMM) >> self.ORR_REGISTER_IMM_SHIFT
+            rn = (op & self.ORR_REGISTER_RN) >> self.ORR_REGISTER_RN_SHIFT
+            rm = op & self.ORR_REGISTER_RM
+            rd = (op & self.ORR_REGISTER_RD) >> self.ORR_REGISTER_RD_SHIFT
+            type = (op & self.ORR_REGISTER_TYPE) >> self.ORR_REGISTER_TYPE_SHIFT
+            s = op & self.ORR_REGISTER_S
+            set_flags = (s != 0)
+            
+            if rd == 0xF and s:
+                #FIXME see SUBS PC, LR and related instructions
+                raise NotImplementedOpCode()
+
+            shift_t, shift_n = self._DecodeImmShift(type, imm)
+            carry = (self.cpsr.value & self.PROCESSOR_C) and 1
+            shifted, carry = self._SHIFT_C(self.register_read(rm).value, shift_t, shift_n, carry)
+            result = self.register_read(rn).value | shifted
+            
+            if rd == 0xF:
+                #FIXME ALUWritePC(result)
+                raise NotImplementedOpCode()
+            else:
+                self.register_write(rd, c_uint32(result))
+                if set_flags:
+                    self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                    self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                    self.cpsr.value |= carry and self.PROCESSOR_C
+
+        def def_ORR_IMMEDIATE_OP(op):
+            imm = op & self.ORR_IMMEDIATE_IMM
+            rn = (op & self.ORR_IMMEDIATE_RN) >> self.ORR_IMMEDIATE_RN_SHIFT
+            rd = (op & self.ORR_IMMEDIATE_RD) >> self.ORR_IMMEDIATE_RD_SHIFT
+            s = op & self.ORR_IMMEDIATE_S
+            set_flags = (s != 0)
+            
+            if rd == 0xF and s:
+                #FIXME see SUBS PC, LR and related instructions
+                raise NotImplementedOpCode()
+            
+            carry = (self.cpsr.value & self.PROCESSOR_C) and 1
+            imm, carry = self._ARMExpandImm_C(imm, carry)
+            result = self.register_read(rn).value | imm
+            
+            if rd == 0xF:
+                #FIXME ALUWritePC(result)
+                raise NotImplementedOpCode()
+            else:
+                self.register_write(rd, c_uint32(result))
+                if set_flags:
+                    self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                    self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                    self.cpsr.value |= carry and self.PROCESSOR_C
+
+        def def_ORR_REGISTER_SH_OP(op):
+            rd = (op & self.ORR_REGISTER_SH_RD) >> self.ORR_REGISTER_SH_RD_SHIFT
+            rn = (op & self.ORR_REGISTER_SH_RN) >> self.ORR_REGISTER_SH_RN_SHIFT
+            rm = op & self.ORR_REGISTER_SH_RM
+            rs = (op & self.ORR_REGISTER_SH_RS) >> self.ORR_REGISTER_SH_RS_SHIFT
+            type = (op & self.ORR_REGISTER_SH_TYPE) >> self.ORR_REGISTER_SH_TYPE_SHIFT
+            s = op & self.ORR_REGISTER_SH_S
+            set_flags = (s != 0)
+            
+            if rd == 0xF or rm == 0xF or rn == 0xF or rs == 0xF:
+                raise Unpredictable()
+            
+            shift_t = self._DecodeRegShift(type)
+            rs_value = self.register_read(rs).value
+            shift_n = rs_value & 0xFF
+            carry = (self.cpsr.value & self.PROCESSOR_C) and 1
+            shifted, carry = self._SHIFT_C(self.register_read(rm).value, shift_t, shift_n, carry)
+            result = self.register_read(rn).value | shifted
+            self.register_write(rd, c_uint32(result))
+            if set_flags:
+                    self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                    self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                    self.cpsr.value |= carry and self.PROCESSOR_C
+                
+        def def_BIC_REGISTER_SH_OP(op):
+            rd = (op & self.BIC_REGISTER_SH_RD) >> self.BIC_REGISTER_SH_RD_SHIFT
+            rn = (op & self.BIC_REGISTER_SH_RN) >> self.BIC_REGISTER_SH_RN_SHIFT
+            rm = op & self.BIC_REGISTER_SH_RM
+            rs = (op & self.BIC_REGISTER_SH_RS) >> self.BIC_REGISTER_SH_RS_SHIFT
+            type = (op & self.BIC_REGISTER_SH_TYPE) >> self.BIC_REGISTER_SH_TYPE_SHIFT
+            s = op & self.BIC_REGISTER_SH_S
+            set_flags = (s != 0)
+            
+            if rd == 0xF or rm == 0xF or rn == 0xF or rs == 0xF:
+                raise Unpredictable()
+            
+            shift_t = self._DecodeRegShift(type)
+            rs_value = self.register_read(rs).value
+            shift_n = rs_value & 0xFF
+            carry = (self.cpsr.value & self.PROCESSOR_C) and 1
+            shifted, carry = self._SHIFT_C(self.register_read(rm).value, shift_t, shift_n, carry)
+            result = self.register_read(rn).value & self._NOT(shifted)
+            self.register_write(rd, c_uint32(result))
+            if set_flags:
+                    self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                    self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                    self.cpsr.value |= carry and self.PROCESSOR_C
+
+        def def_MCR_OP(op):
+            opc1 = (op & self.MCR_OPC1) >> self.MCR_OPC1_SHIFT
+            crn = (op & self.MCR_CRN) >> self.MCR_CRN_SHIFT
+            rt = (op & self.MCR_RT) >> self.MCR_RT_SHIFT
+            coproc = (op & self.MCR_COPROC) >> self.MCR_COPROC_SHIFT
+            opc2 = (op & self.MCR_OPC2) >> self.MCR_OPC2_SHIFT
+            crm = op & self.MCR_CRM
+            if coproc == 0xF:
+                self._CP15_write(crn, opc1, crm, opc2, self.register_read(rt).value)
+            else:
+                raise NotImplementedOpCode()
+
+        def def_MRC_OP(op):    
+            opc1 = (op & self.MRC_OPC1) >> self.MRC_OPC1_SHIFT
+            crn = (op & self.MRC_CRN) >> self.MRC_CRN_SHIFT
+            rt = (op & self.MRC_RT) >> self.MRC_RT_SHIFT
+            coproc = (op & self.MRC_COPROC) >> self.MRC_COPROC_SHIFT
+            opc2 = (op & self.MRC_OPC2) >> self.MRC_OPC2_SHIFT
+            crm = op & self.MRC_CRM
+            if coproc == 0xF:
+                value = self._CP15_read(crn, opc1, crm, opc2)
+                self.register_write(rt, value)
+            else:
+                raise NotImplementedOpCode()
+
+        def def_LSR_IMMEDIATE_OP(op):
+            imm = (op & self.LSR_IMMEDIATE_IMM) >> self.LSR_IMMEDIATE_IMM_SHIFT
+            rd = (op & self.LSR_IMMEDIATE_RD) >> self.LSR_IMMEDIATE_RD_SHIFT
+            rm = op & self.LSR_IMMEDIATE_RM
+            s = op & self.LSR_IMMEDIATE_S
+            set_flags = (s!=0)
+            
+            if imm == 0:
+                #FIXME see MOV (Register)
+                raise WrongExecutionFlow()
+            
+            _, shift_n = self._DecodeImmShift(0x1, imm)
+            carry = self.cpsr.value & self.PROCESSOR_C and 1
+            result, carry = self._SHIFT_C(self.register_read(rm).value, self.SRType_LSR, shift_n, carry)
+            if rd == 0xF:
+                #FIXME ALUWritePC()
+                raise NotImplementedOpCode()
+            else:
+                self.register_write(rd, c_uint32(result))
+                if set_flags:
+                    self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                    self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                    self.cpsr.value |= carry and self.PROCESSOR_C
+
+        def def_LSL_IMMEDIATE_OP(op):
+            imm = (op & self.LSL_IMMEDIATE_IMM) >> self.LSL_IMMEDIATE_IMM_SHIFT
+            rd = (op & self.LSL_IMMEDIATE_RD) >> self.LSL_IMMEDIATE_RD_SHIFT
+            rm = op & self.LSL_IMMEDIATE_RM
+            s = op & self.LSL_IMMEDIATE_S
+            set_flags = (s!=0)
+            
+            if imm == 0:
+                #FIXME see MOV (Register)
+                raise WrongExecutionFlow()
+            
+            _, shift_n = self._DecodeImmShift(0x0, imm)
+            carry = self.cpsr.value & self.PROCESSOR_C and 1
+            result, carry = self._SHIFT_C(self.register_read(rm).value, self.SRType_LSL, shift_n, carry)
+            if rd == 0xF:
+                #FIXME ALUWritePC()
+                raise NotImplementedOpCode()
+            else:
+                self.register_write(rd, c_uint32(result))
+                if set_flags:
+                    self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                    self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                    self.cpsr.value |= carry and self.PROCESSOR_C
+
+        self.op_handlers = {
+                    
+                            'LDR_LITERAL_OP'    : def_LDR_LITERAL_OP,
+                            'LDR_IMMEDIATE_OP'  : def_LDR_IMMEDIATE_OP,
+                            'STR_IMMEDIATE_OP'  : def_STR_IMMEDIATE_OP,
+                            'STR_REGISTER_OP'   : def_STR_REGISTER_OP,
+                            'B_OP'              : def_B_OP,
+                            'BL_OP'             : def_BL_OP,
+                            'BX_OP'             : def_BX_OP,
+                            'LDM_OP'            : def_LDM_OP,
+                            'STM_OP'            : def_STM_OP,
+                            'PUSH_OP1'          : def_PUSH_OP1,
+                            'PUSH_OP2'          : def_PUSH_OP2,
+                            'POP_OP1'           : def_POP_OP1,
+                            'POP_OP2'           : def_POP_OP2,
+                            'CMP_REGISTER_OP'   : def_CMP_REGISTER_OP,
+                            'CMP_IMMEDIATE_OP'  : def_CMP_IMMEDIATE_OP,
+                            'TST_IMMEDIATE_OP'  : def_TST_IMMEDIATE_OP,
+                            'MSR_REGISTER_OP'   : def_MSR_REGISTER_OP,
+                            'MVN_IMMEDIATE_OP'  : def_MVN_IMMEDIATE_OP,
+                            'MVN_REGISTER_SH_OP': def_MVN_REGISTER_SH_OP,
+                            'BIC_IMMEDIATE_OP'  : def_BIC_IMMEDIATE_OP,
+                            'BIC_REGISTER_SH_OP': def_BIC_REGISTER_SH_OP,
+                            'MRS_OP'            : def_MRS_OP,
+                            'ORR_REGISTER_OP'   : def_ORR_REGISTER_OP,
+                            'ORR_IMMEDIATE_OP'  : def_ORR_IMMEDIATE_OP,
+                            'ORR_REGISTER_SH_OP': def_ORR_REGISTER_SH_OP,
+                            'MCR_OP'            : def_MCR_OP,
+                            'MRC_OP'            : def_MRC_OP,
+                            'LSR_IMMEDIATE_OP'  : def_LSR_IMMEDIATE_OP,
+                            'LSL_IMMEDIATE_OP'  : def_LSL_IMMEDIATE_OP
+                            }
+        
     def init_registers(self):
         self.cpsr   = CPSR_RESET
         self.ip     = INITIAL_IP
@@ -314,6 +1302,9 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
         self.registers[mode].append(c_uint32()) # r13
         self.registers[mode].append(c_uint32()) # r14
         
+        for _, mode in processor_modes.items():
+            self.registers[mode].append(self.ip)
+        # Setting the processor in supervisor mode.
         self.cpsr.value |= processor_modes['supervisor']
         
         # Adding spsr
@@ -322,7 +1313,8 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
         for mode in modes:
             mode = processor_modes[mode]
             self.spsr_registers[mode] = c_uint32()
-            
+
+
         # CP15 Registers
         self.cp15_registers = {}
         def init_cp15_register(crn, opc1, crm, opc2, secure, value):
@@ -342,18 +1334,8 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                             self.cp15_registers[crn] = {opc1: {crm: {opc2: {bank: value}}}}
 
         # crn, opc1, crm, opc2, bank(0 => secure, 1 => non-secure)
-        
-
-        #self.cp15_registers[12] = {0: {0: {0: {0 : c_uint32()}}}} # VBAR ( secure )
-        #self.cp15_registers[12][0][0][0][1] = c_uint32() # VBAR ( non-secure )
-        #self.cp15_registers[12][0][0][1][0] = c_uint32() # MVBAR ( secure )
-        #self.cp15_registers[12][0][1][0][0] = c_uint32() # ISR ( secure )
-        #self.cp15_registers[12][0][1][0][1] = c_uint32() # ISR ( non-secure )
-        #self.cp15_registers[1][0][0][0][0] = c_uint32() # SCTLR ( secure )
-        #self.cp15_registers[1][0][1][0][0] = c_uint32() # SCR ( secure )
-        #self.cp15_registers[1][0][0][0][1] = c_uint32() # SCTLR ( non-secure )
-        
-        
+        midr = MIDR_RESET
+        init_cp15_register(0, 0, 0, 0, True, midr) # VBAR ( common )
         init_cp15_register(12, 0, 0, 0, True, c_uint32()) # VBAR ( secure )
         init_cp15_register(12, 0, 0, 0, False, c_uint32()) # VBAR ( non-secure )
         init_cp15_register(12, 0, 0, 1, True, c_uint32()) # MVBAR ( secure )
@@ -362,8 +1344,22 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
         init_cp15_register(1, 0, 0, 0, True, c_uint32()) # SCTLR ( secure )
         init_cp15_register(1, 0, 0, 0, False, c_uint32()) # SCR ( secure )
         init_cp15_register(1, 0, 1, 0, True, c_uint32()) # SCTLR ( non-secure )
-        
-        
+        init_cp15_register(2, 0, 0, 0, False, c_uint32()) # TTBR0 ( non-secure )
+        init_cp15_register(2, 0, 0, 0, True, c_uint32()) # TTBR0 ( secure )
+        init_cp15_register(2, 0, 0, 1, False, c_uint32()) # TTBR1 ( non-secure )
+        init_cp15_register(2, 0, 0, 1, True, c_uint32()) # TTBR1 ( secure )
+        init_cp15_register(2, 0, 0, 2, False, c_uint32()) # TTBCR ( non-secure )
+        init_cp15_register(2, 0, 0, 2, True, c_uint32()) # TTBCR ( non-secure )
+        init_cp15_register(3, 0, 0, 0, False, c_uint32()) # DACR ( secure )
+        init_cp15_register(3, 0, 0, 0, True, c_uint32()) # DACR ( non-secure )
+        init_cp15_register(5, 0, 0, 0, False, c_uint32()) # DFSR ( secure )
+        init_cp15_register(5, 0, 0, 0, True, c_uint32()) # DFSR ( non-secure )
+        init_cp15_register(5, 0, 0, 1, False, c_uint32()) # IFSR ( secure )
+        init_cp15_register(5, 0, 0, 1, True, c_uint32()) # IFSR ( non-secure )
+        init_cp15_register(6, 0, 0, 0, False, c_uint32()) # DFAR ( secure )
+        init_cp15_register(6, 0, 0, 0, True, c_uint32()) # DFAR ( non-secure )
+        init_cp15_register(6, 0, 0, 2, False, c_uint32()) # IFAR ( secure )
+        init_cp15_register(6, 0, 0, 2, True, c_uint32()) # IFAR ( non-secure )
     
     def init_interrupts(self):
         # undefined instruction    0x0
@@ -541,14 +1537,6 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     # TODO Use later
     def _IsSecurityExtImplemented(self):
         return True
-
-    def _TakeSVCException(self):
-        thumb = self.cpsr.value & self.PROCESSOR_THUMB
-        ip = self.get_ip()
-        new_lr_value = (ip - 2) if thumb else (ip - 4)
-        new_spcr = self.cpsr.value
-    
-    
     
     # Data Processing instructions mask
     DATA_PROCESSING_INS_MASK    = 0x0C000000
@@ -572,6 +1560,9 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     
     def execute(self):
         #import ipdb;ipdb.set_trace()
+#        if self.ip.value == 0x40301bf0:
+#            import ipdb;ipdb.set_trace()
+            
         self._TakeException()
         op = self.fetch_next_op()
         
@@ -634,130 +1625,42 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
         if not proceed:
             self.next_op()
             return
-            
+
         if (op & self.LOAD_STORE_INS_MASK) == self.LOAD_STORE_INS:
             # Load/store word and unsigned byte mask
             if (op & self.LDR_LITERAL_OP_MASK) == self.LDR_LITERAL_OP:
-                # NOTE: Always write this before LDR_IMMEDIATE_OP
-                # LDR (literal)
-                add = ((op & self.LDR_LITERAL_U) != 0)
-                rt = (op & self.LDR_LITERAL_RT) >> self.LDR_LITERAL_RT_SHIT
-                imm = op & self.LDR_LITERAL_IMM
-                base = self.get_ip() & (~ 0x3)
-                address = (base + imm) if add else (base - imm)
-                data = self.system_bus.read(address)
-                
-                self.register_write(rt, data)
+                self.op_handlers['LDR_LITERAL_OP'](op)
             elif (op & self.LDR_IMMEDIATE_OP_MASK) == self.LDR_IMMEDIATE_OP:
-                # LDR (immediate, ARM)
-                rn = (op & self.LDR_IMMEDIATE_RN) >> self.LDR_IMMEDIATE_RN_SHIFT
-                rt = (op & self.LDR_IMMEDIATE_RT) >> self.LDR_IMMEDIATE_RT_SHIFT
-                imm = (op & self.LDR_IMMEDIATE_IMM)
-                
-                if rn == 0xF:
-                    #FIXME see LDR ( Literal )
-                    # NOTE: We should never come to this point.
-                    raise WrongExecutionFlow()
-                
-                if not (op & self.LDR_IMMEDIATE_P) and op & self.LDR_IMMEDIATE_W:
-                    #FIXME see LDRT
-                    raise NotImplementedOpCode()
-                
-                if rn == 0xD and not (op & self.LDR_IMMEDIATE_P) and op & self.LDR_IMMEDIATE_U and not (op & self.LDR_IMMEDIATE_W) and imm == 0x4:
-                    #FIXME see  POP
-                    raise NotImplementedOpCode()
-    
-                index = op & self.LDR_IMMEDIATE_P == 1
-                add = op & self.LDR_IMMEDIATE_U == 1
-                wback = not (op & self.LDR_IMMEDIATE_P) and op & self.LDR_IMMEDIATE_W
-                 
-                base = self.register_read(rn)
-                offset_addr = base + imm if add else base - imm
-                address = offset_addr if index else base
-                data = self.system_bus.read(address)
-                if wback:
-                    self.register_write(rn, offset_addr)
-    
-                self.register_write(rt, data)
+                self.op_handlers['LDR_IMMEDIATE_OP'](op)
             elif (op & self.STR_IMMEDIATE_OP_MASK) == self.STR_IMMEDIATE_OP:
-                p = op & self.STR_IMMEDIATE_P
-                w = op & self.STR_IMMEDIATE_W
-                u = op & self.STR_IMMEDIATE_U
-                rt = (op & self.STR_IMMEDIATE_RT) >> self.STR_IMMEDIATE_RT_SHIFT
-                rn = (op & self.STR_IMMEDIATE_RN) >> self.STR_IMMEDIATE_RN_SHIFT
-                imm = op & self.STR_IMMEDIATE_IMM
-                
-                if (not p) and w:
-                    #FIXME see STRT
-                    raise NotImplementedOpCode()
-                
-                if rn == 0xD and p and (not u) and w and imm == 0x4:
-                    #FIXME see PUSH
-                    raise NotImplementedOpCode()
-                
-                index = (p != 0)
-                add = (u != 0)
-                wback = (not p) or (w != 0)
-                
-                if wback and (rn == 15 or rn == rt):
-                    raise Unpredictable()
-                
-                rn_value = self.register_read(rn).value
-                offset_addr = (rn_value + imm) if add else (rn_value - imm)
-                address = offset_addr if index else rn_value
-                self.system_bus.write(address, self.register_read(rt))
-                
-                if wback:
-                    self.register_write(rn, c_uint32(offset_addr))
+                self.op_handlers['STR_IMMEDIATE_OP'](op)
             elif (op & self.STR_REGISTER_OP_MASK) == self.STR_REGISTER_OP:
-                p = op & self.STR_REGISTER_P
-                u = op & self.STR_REGISTER_U
-                w = op & self.STR_REGISTER_W
-                type = (op & self.STR_REGISTER_TYPE) >> self.STR_REGISTER_TYPE_SHIFT
-                rm = op & self.STR_REGISTER_RM
-                imm = (op & self.STR_REGISTER_IMM) >> self.STR_REGISTER_IMM_SHIFT
-                rt = (op & self.STR_REGISTER_RT) >> self.STR_REGISTER_RT_SHIFT
-                rn = (op & self.STR_REGISTER_RN) >> self.STR_REGISTER_RN_SHIFT
-                
-                if (not p) and w:
-                    #FIXME see STRT
-                    raise NotImplementedOpCode()
-                
-                index = (p != 0)
-                add = (u != 0)
-                wback = (not p) or (w != 0)
-                shift_t, shift_n = self._DecodeImmShift(type, imm)
-                
-                if rm == 0xF:
-                    raise Unpredictable()
-                
-                if wback and (rn == 15 or rn == rt):
-                    raise Unpredictable()
-                
-                carry = self.cpsr.value & self.PROCESSOR_C and 1
-                offset = self._SHIFT(self.register_read(rm).value, shift_t, shift_n, carry)
-                rn_value = self.register_read(rn).value
-                offset_addr = (rn_value + offset) if add else (rn_value + offset)
-                address = offset_addr if index else rn_value
-                if rt == 0xF:
-                    #FIXME see PCStoreValue
-                    raise NotImplementedOpCode()
-                else:
-                    data = self.register_read(rt)
-                    
-                self.system_bus.write(address, data)
-                if wback:
-                    self.register_write(rn, c_uint32(offset_addr))
+                self.op_handlers['STR_REGISTER_OP'](op)
+            else:
+                raise NotImplementedOpCode()
         elif (op & self.BRANCH_INS_MASK) == self.BRANCH_INS:
             if (op & self.B_OP_MASK) == self.B_OP:
-                imm = self._SignExtend26to32((op & self.B_IMM) << 2)
-                self.set_ip(c_uint32(self.get_ip() + imm))
+                self.op_handlers['B_OP'](op)
+                # always return here to avoid incrementing the IP register
                 return
             elif (op & self.BL_OP_MASK) == self.BL_OP:
-                imm = self._SignExtend26to32((op & self.B_IMM) << 2)
-                lr = self.get_lr_link()
-                self.register_write(14, c_uint32(lr))
-                self.set_ip(c_uint32(self.get_ip() + imm))
+                self.op_handlers['BL_OP'](op)
+                # always return here to avoid incrementing the IP register
+                return
+            elif (op & self.LDM_OP_MASK) == self.LDM_OP:
+                self.op_handlers['LDM_OP'](op)
+            elif (op & self.STM_OP_MASK) == self.STM_OP:
+                self.op_handlers['STM_OP'](op)
+            elif (op & self.PUSH_OP1_MASK) == self.PUSH_OP1:
+                self.op_handlers['PUSH_OP1'](op)
+            elif (op & self.PUSH_OP2_MASK) == self.PUSH_OP2:
+                self.op_handlers['PUSH_OP2'](op)
+            elif (op & self.POP_OP1_MASK) == self.POP_OP1:
+                self.op_handlers['POP_OP1'](op)
+            elif (op & self.POP_OP2_MASK) == self.POP_OP2:
+                self.op_handlers['POP_OP2'](op)
+            else:
+                raise NotImplementedOpCode()
         elif (op & self.DATA_PROCESSING_INS_MASK) == self.DATA_PROCESSING_INS:
             if (op & self.ADD_IMMEDIATE_OP_MASK) == self.ADD_IMMEDIATE_OP:
                 rd = (op & self.ADD_IMMEDIATE_RD) >> self.ADD_IMMEDIATE_RD_SHIFT
@@ -816,8 +1719,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                         self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
                         self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
                         self.cpsr.value |= carry and self.PROCESSOR_C
-                        self.cpsr.value |= overflow and self.PROCESSOR_V
-                        
+                        self.cpsr.value |= overflow and self.PROCESSOR_V       
             elif (op & self.SUB_REGISTER_OP_MASK) == self.SUB_REGISTER_OP:
                 imm = (op & self.SUB_REGISTER_IMM) >> self.SUB_REGISTER_IMM_SHIFT
                 rn = (op & self.SUB_REGISTER_RN) >> self.SUB_REGISTER_RN_SHIFT
@@ -825,7 +1727,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 type = (op & self.SUB_REGISTER_TYPE) >> self.SUB_REGISTER_TYPE_SHIFT
                 rm = op & self.SUB_REGISTER_RM
                 s = op & self.SUB_REGISTER_S
-                set_flags = (s == 1)
+                set_flags = (s != 0)
                 shift_t, shift_n = self._DecodeImmShift(type, imm)
                 
                 if rd == 0xF and set_flags:
@@ -851,7 +1753,33 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                         self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
                         self.cpsr.value |= carry and self.PROCESSOR_C
                         self.cpsr.value |= overflow and self.PROCESSOR_V
+            elif (op & self.SUB_IMMEDIATE_OP_MASK) == self.SUB_IMMEDIATE_OP:
+                imm = op & self.SUB_IMMEDIATE_IMM
+                rn = (op & self.SUB_IMMEDIATE_RN) >> self.SUB_IMMEDIATE_RN_SHIFT
+                rd = (op & self.SUB_IMMEDIATE_RD) >> self.SUB_IMMEDIATE_RD_SHIFT
+                set_flags = ((op & self.SUB_IMMEDIATE_S) != 0)
+                imm = self._ARMExpandImm(imm)
+                
+                if rd == 0xF and set_flags:
+                    #FIXME SUBS PC, LR and related instructions
+                    raise NotImplementedOpCode()
+                    
+                if rn == 0xD:
+                    #FIXME see SUB (SP minus register)
+                    raise NotImplementedOpCode()
 
+                result, carry, overflow = self._AddWithCarry(self.register_read(rn).value, self._NOT(imm), 1)
+                
+                if rd == 0xF:
+                    #FIXME see ALUWritePC(result)
+                    raise NotImplementedOpCode()
+                else:
+                    self.register_write(rd, c_uint32(result))
+                    if set_flags:
+                        self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                        self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                        self.cpsr.value |= carry and self.PROCESSOR_C
+                        self.cpsr.value |= overflow and self.PROCESSOR_V
             elif (op & self.BFC_OP_MASK) == self.BFC_OP:
                 rd = (op & self.BFC_RD) >> self.BFC_RD_SHIFT
                 msbit = (op & self.BFC_MSB) >> self.BFC_MSB_SHIFT
@@ -869,21 +1797,9 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 self.register_write(rd,c_uint32(masked_value))
                 
             elif (op & self.CMP_REGISTER_OP_MASK) == self.CMP_REGISTER_OP:
-                rn = (op & self.CMP_REGISTER_RN) >> self.CMP_REGISTER_RN_SHIFT
-                rm = op & self.CMP_REGISTER_RM
-                type = (op & self.CMP_REGISTER_TYPE) >> self.CMP_REGISTER_TYPE_SHIFT
-                imm = (op & self.CMP_REGISTER_IMM) >> self.CMP_REGISTER_IMM_SHIFT
-                shift_t, shift_n = self._DecodeImmShift(type, imm)
-                carry = self.cpsr.value & self.PROCESSOR_C and 1
-                shifted = self._SHIFT(self.register_read(rm).value, shift_t, shift_n, carry)
-                complemented_shifted = c_uint32(-shifted).value
-                result, carry, overflow = self._AddWithCarry(self.register_read(rn).value, complemented_shifted, 0)
-                
-                self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
-                self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
-                self.cpsr.value |= carry and self.PROCESSOR_C
-                self.cpsr.value |= overflow and self.PROCESSOR_V
-
+                self.op_handlers['CMP_REGISTER_OP'](op)
+            elif (op & self.CMP_IMMEDIATE_OP_MASK) == self.CMP_IMMEDIATE_OP:
+                self.op_handlers['CMP_IMMEDIATE_OP'](op)
             elif (op & self.MOV_IMMEDIATE_OP1_MASK) == self.MOV_IMMEDIATE_OP1:
                 # FIXME
                 rd = (op & self.MOV_IMMEDIATE_OP1_RD) >> self.MOV_IMMEDIATE_OP1_RD_SHIFT
@@ -901,7 +1817,6 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                         self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
                         self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
                         self.cpsr.value |= carry and self.PROCESSOR_C
-
             elif (op & self.MOV_IMMEDIATE_OP2_MASK) == self.MOV_IMMEDIATE_OP2:
                 rd = (op & self.MOV_IMMEDIATE_OP1_RD) >> self.MOV_IMMEDIATE_OP1_RD_SHIFT
                 imm1 = op & self.MOV_IMMEDIATE_OP1_IMM
@@ -911,7 +1826,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 if rd == 0xF:
                     raise Unpredictable
                 else:
-                    self.register_write(rd, c_uint32(result))
+                    self.register_write(rd, c_uint32(imm))
             elif (op & self.MOV_REGISTER_OP_MASK) == self.MOV_REGISTER_OP:
                 rd = (op & self.MOV_REGISTER_RD) >> self.MOV_REGISTER_RD_SHIFT
                 rm = op & self.MOV_REGISTER_RM
@@ -927,123 +1842,50 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                         self.cpsr.value |= (result.value & 0x80000000) and self.PROCESSOR_N
                         self.cpsr.value |= (result.value == 0) and self.PROCESSOR_Z
             elif (op & self.LSL_IMMEDIATE_OP_MASK) == self.LSL_IMMEDIATE_OP:
-                imm = (op & self.LSL_IMMEDIATE_IMM) >> self.LSL_IMMEDIATE_IMM_SHIFT
-                rd = (op & self.LSL_IMMEDIATE_RD) >> self.LSL_IMMEDIATE_RD_SHIFT
-                rm = op & self.LSL_IMMEDIATE_RM
-                s = op & self.LSL_IMMEDIATE_S
-                set_flags = (s!=0)
-                
-                if imm == 0:
-                    #FIXME see MOV (Register)
-                    raise WrongExecutionFlow()
-                
-                _, shift_n = self._DecodeImmShift(0x0, imm)
-                carry = self.cpsr.value & self.PROCESSOR_C and 1
-                result, carry = self._SHIFT_C(self.register_read(rm).value, self.SRType_LSL, shift_n, carry)
-                if rd == 0xF:
-                    #FIXME ALUWritePC()
-                    raise NotImplementedOpCode()
-                else:
-                    self.register_write(rd, c_uint32(result))
-                    if set_flags:
-                        self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
-                        self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
-                        self.cpsr.value |= carry and self.PROCESSOR_C
+                self.op_handlers['LSL_IMMEDIATE_OP'](op)
             elif (op & self.LSR_IMMEDIATE_OP_MASK) == self.LSR_IMMEDIATE_OP:
-                imm = (op & self.LSR_IMMEDIATE_IMM) >> self.LSR_IMMEDIATE_IMM_SHIFT
-                rd = (op & self.LSR_IMMEDIATE_RD) >> self.LSR_IMMEDIATE_RD_SHIFT
-                rm = op & self.LSR_IMMEDIATE_RM
-                s = op & self.LSR_IMMEDIATE_S
-                set_flags = (s!=0)
-                
-                if imm == 0:
-                    #FIXME see MOV (Register)
-                    raise WrongExecutionFlow()
-                
-                _, shift_n = self._DecodeImmShift(0x1, imm)
-                carry = self.cpsr.value & self.PROCESSOR_C and 1
-                result, carry = self._SHIFT_C(self.register_read(rm).value, self.SRType_LSR, shift_n, carry)
-                if rd == 0xF:
-                    #FIXME ALUWritePC()
-                    raise NotImplementedOpCode()
-                else:
-                    self.register_write(rd, c_uint32(result))
-                    if set_flags:
-                        self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
-                        self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
-                        self.cpsr.value |= carry and self.PROCESSOR_C
+                self.op_handlers['LSR_IMMEDIATE_OP'](op)
             elif (op & self.ORR_IMMEDIATE_OP_MASK) == self.ORR_IMMEDIATE_OP:
-                imm = op & self.ORR_IMMEDIATE_IMM
-                rd = (op & self.ORR_IMMEDIATE_RD) >> self.ORR_IMMEDIATE_RD_SHIFT    
-                rn = (op & self.ORR_IMMEDIATE_RN) >> self.ORR_IMMEDIATE_RN_SHIFT
-                s = op & self.ORR_IMMEDIATE_S
-                set_flags = (s != 0)
-                
-                if rd == 0xF and s:
-                    #FIXME see SUBS PC, LR and related instructions
-                    raise NotImplementedOpCode()
-                
-                carry = self.cpsr.value & self.PROCESSOR_C and 1
-                imm, carry = self._ARMExpandImm_C(imm, carry)
-                
-                result = self.register_read(rn).value | imm
-                
-                if rd == 0xF:
-                    #FIXME ALUWritePC(result)
-                    raise NotImplementedOpCode()
-                else:
-                    self.register_write(rd, c_uint32(result))
-                    if set_flags:
-                        self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
-                        self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
-                        self.cpsr.value |= carry and self.PROCESSOR_C
+                self.op_handlers['ORR_IMMEDIATE_OP'](op)
             elif (op & self.ORR_REGISTER_OP_MASK) == self.ORR_REGISTER_OP:
-                imm = (op & self.ORR_REGISTER_IMM) >> self.ORR_REGISTER_IMM_SHIFT
-                rn = (op & self.ORR_REGISTER_RN) >> self.ORR_REGISTER_RN_SHIFT
-                rm = op & self.ORR_REGISTER_RM
-                rd = (op & self.ORR_REGISTER_RD) >> self.ORR_REGISTER_RD_SHIFT
-                type = (op & self.ORR_REGISTER_TYPE) >> self.ORR_REGISTER_TYPE_SHIFT
-                s = op & self.ORR_REGISTER_S
-                set_flags = (s != 0)
-                
-                if rd == 0xF and s:
-                    #FIXME see SUBS PC, LR and related instructions
-                    raise NotImplementedOpCode()
-                
-                shift_t, shift_n = self._DecodeImmShift(type, imm)
-                carry = self.cpsr.value & self.PROCESSOR_C and 1
-                shifted, carry = self._SHIFT_C(self.register_read(rm).value, type, imm, carry)
-                result = self.register_read(rn).value | shifted
-                
-                if rd == 0xF:
-                    #FIXME ALUWritePC(result)
-                    raise NotImplementedOpCode()
-                else:
-                    self.register_write(rd, c_uint32(result))
-                    if set_flags:
-                        self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
-                        self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
-                        self.cpsr.value |= carry and self.PROCESSOR_C
+                self.op_handlers['ORR_REGISTER_OP'](op)
+            elif (op & self.ORR_REGISTER_SH_OP_MASK) == self.ORR_REGISTER_SH_OP:
+                self.op_handlers['ORR_REGISTER_SH_OP'](op)
+            elif (op & self.TST_IMMEDIATE_OP_MASK) == self.TST_IMMEDIATE_OP:
+                self.op_handlers['TST_IMMEDIATE_OP'](op)
+            elif (op & self.MVN_IMMEDIATE_OP_MASK) == self.MVN_IMMEDIATE_OP:
+                self.op_handlers['MVN_IMMEDIATE_OP'](op)
+            elif (op & self.MVN_REGISTER_SH_OP_MASK) == self.MVN_REGISTER_SH_OP:
+                self.op_handlers['MVN_REGISTER_SH_OP'](op)
+            elif (op & self.BIC_IMMEDIATE_OP_MASK) == self.BIC_IMMEDIATE_OP:
+                self.op_handlers['BIC_IMMEDIATE_OP'](op)
+            elif (op & self.BIC_REGISTER_SH_OP_MASK) == self.BIC_REGISTER_SH_OP:
+                self.op_handlers['BIC_REGISTER_SH_OP'](op)
+            elif (op & self.MRS_OP_MASK) == self.MRS_OP:
+                self.op_handlers['MRS_OP'](op)
+            elif (op & self.MSR_REGISTER_OP_MASK) == self.MSR_REGISTER_OP:
+                self.op_handlers['MSR_REGISTER_OP'](op)
+            elif (op & self.BX_OP_MASK) == self.BX_OP:
+                self.op_handlers['BX_OP'](op)
+                return
+            else:
+                raise NotImplementedOpCode()
         elif (op & self.SVC_COPROC_INS_MASK) == self.SVC_COPROC_INS: 
             if (op & self.SVC_OP_MASK) == self.SVC_OP:
                 imm = op & self.SVC_IMM # Not used at all.
                 self.interrupt_triggered(self.IRQ_SVC)
                 return
             elif (op & self.MCR_OP_MASK) == self.MCR_OP:
-                opc1 = (op & self.MCR_OPC1) >> self.MCR_OPC1_SHIFT
-                crn = (op & self.MCR_CRN) >> self.MCR_CRN_SHIFT
-                rt = (op & self.MCR_RT) >> self.MCR_RT_SHIFT
-                coproc = (op & self.MCR_COPROC) >> self.MCR_COPROC_SHIFT
-                opc2 = (op & self.MCR_OPC2) >> self.MCR_OPC2_SHIFT
-                crm = op & self.MCR_CRM
-                if coproc == 0xF:
-                    self._CP15_write(crn, opc1, crm, opc2, self.register_read(rt).value)
-                else:
-                    raise NotImplementedOpCode()
+                self.op_handlers['MCR_OP'](op)
+            elif (op & self.MRC_OP_MASK) == self.MRC_OP:    
+                self.op_handlers['MRC_OP'](op)
+            else:
+                raise NotImplementedOpCode()
         else:
             raise InvalidInstructionOpCode()
         
         self.next_op()
+        
     
     
     def _SignExtend26to32(self, imm):
@@ -1056,7 +1898,16 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
 
         return result
         
-        
+    
+    
+    def _BitCount(self, value):
+        # register_list
+        count = 0
+        for x in range(32):
+            count += (value & (1 << x)) and 1
+            
+        return count
+                
     SRType_LSL = 0x0
     SRType_LSR = 0x1
     SRType_ASR = 0x2
@@ -1082,6 +1933,21 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
         
         return shift_t, shift_n
     
+    def _DecodeRegShift(self, type):
+        if type == 0:
+            shift_t = self.SRType_LSL 
+        elif type == 1:
+            shift_t = self.SRType_LSR
+        elif type == 2:
+            shift_t = self.SRType_ASR
+        elif type == 3:
+            shift_t = self.SRType_ROR
+        
+        return shift_t
+    
+    def _NOT(self, value):
+        return c_uint32(~value).value
+
     def _SHIFT(self, value, type, amount, carry_in):
         result, _ = self._SHIFT_C(value, type, amount, carry_in)
         return result
@@ -1103,10 +1969,15 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 
         return result, carry_out
     
+    def _ARMExpandImm(self, imm):
+        carry = self.cpsr.value & self.PROCESSOR_C and 1
+        result, _ = self._ARMExpandImm_C(imm, carry)
+        return result
+    
     def _ARMExpandImm_C(self, imm, carry_in):
         unrotated_value = imm & ((1 << 8) - 1)
         shift = (imm & (0xF << 8)) >> 8
-        imm, carry_out = self._SHIFT_C(unrotated_value, self.SRType_ROR, shift, carry_in)
+        imm, carry_out = self._SHIFT_C(unrotated_value, self.SRType_ROR, 2*shift, carry_in)
         return imm, carry_out
         
     def _LSL_C(self, x, shift):
@@ -1185,6 +2056,14 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
         overflow = 0 if result == c_int32(signed_sum).value else 1
         return (result, carry_out, overflow)
     
+    def _BXWritePC(self, address):
+        if address.value & 1:
+            raise NotImplementedInstructionSet()
+        elif address.value & 2 == 0:
+            self.set_ip(address)
+        else:
+            raise Unpredictable()
+    
     def _IsMonitorMode(self):
         return (self.cpsr.value & self.PROCESSOR_MODE) == 0x16
     
@@ -1206,10 +2085,11 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     def _SCR(self):
         return self._CP15_read(1, 0, 1, 0)
     
-    SCTLR_V  = 0x1 << 13
-    SCTLR_VE = 0x1 << 24
-    SCTLR_EE = 0x1 << 25
-    SCTLR_TE = 0x1 << 30
+    SCTLR_M     = 0x1 << 0
+    SCTLR_V     = 0x1 << 13
+    SCTLR_VE    = 0x1 << 24
+    SCTLR_EE    = 0x1 << 25
+    SCTLR_TE    = 0x1 << 30
     def _SCTLR(self):
         return self._CP15_read(1, 0, 0, 0)
     
@@ -1219,11 +2099,54 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     def _MVBAR(self):
         return self._CP15_read(12, 0, 0, 1)
     
+    TTBCR_N = 0x7
+    def _TTBCR(self):
+        return self._CP15_read(2, 0, 0, 2)
+    
+    def _TTBCR0(self):
+        return self._CP15_read(2, 0, 0, 0)
+    
+    def _TTBCR1(self):
+        return self._CP15_read(2, 0, 0, 1)
+    
+    
+    def _DFAR(self):
+        return self._CP15_read(6, 0, 0, 0)
+    
+    def _DFSR(self):
+        return self._CP15_read(5, 0, 0, 0)
+    
+    def _IFAR(self):
+        return self._CP15_read(6, 0, 0, 2)
+    
+    def _IFSR(self):
+        return self._CP15_read(5, 0, 0, 1)
+    
+    DACR_NACCESS    = 0x0
+    DACR_CLIENT     = 0x1
+    DACR_MANAGER    = 0x2
+    DACR_RESERVED   = 0x3
+    def _DACR_domain_type(self, domain_number):
+        mask = 0x3 << 2 * domain_number
+        domains = self._CP15_read(3, 0, 0, 0).value
+        domain = domains & mask
+        domain = domain >> (2 * domain_number)
+        return domain
+    
+    
+    
     def _CP15_read(self, crn, opc1, crm, opc2):
         privileged = self._IsPrivilegedMode()
         secure = ((self.cp15_registers[1][0][1][0][0].value & self.SCR_NS) == 0)
-        user_mode = self._IsUserMode()
-        if crn == 1:
+        
+        if crn == 0:
+            if opc1 == 0 and crm == 0 and opc2 == 0:
+                # MIDR
+                if not privileged:
+                        raise AccessViolation()
+                
+                return self.cp15_registers[0][0][0][0][0]
+        elif crn == 1:
             if opc1 == 0 and crm == 0 and opc2 == 0:
                 # SCTRL
                 if not privileged:
@@ -1231,12 +2154,72 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 
                 bank = 0 if secure else 1
                 return self.cp15_registers[1][0][0][0][bank]
-            if opc1 == 0 and crm == 1 and opc2 == 0:
+            elif opc1 == 0 and crm == 1 and opc2 == 0:
                 # SCR
                 if not (privileged and secure):
                     raise AccessViolation()
                 
                 return self.cp15_registers[1][0][1][0][0]
+        elif crn == 2:
+            if opc1 == 0 and crm == 0 and opc2 == 0:
+                # TTBR0
+                bank = 0 if secure else 1
+                return self.cp15_registers[1][0][0][0][bank]
+            elif opc1 == 0 and crm == 0 and opc2 == 1:
+                # TTBR0
+                bank = 0 if secure else 1
+                return self.cp15_registers[1][0][0][0][bank]
+            elif opc1 == 0 and crm == 0 and opc2 == 2:
+                # TTBCR
+                if not privileged:
+                    raise AccessViolation()
+                
+                bank = 0 if secure else 1
+                return self.cp15_registers[1][0][0][0][bank]
+        elif crn == 3:
+            if opc1 == 0 and crm == 0 and opc2 == 0:
+                # DACR
+                if not privileged:
+                    raise AccessViolation()
+                
+                bank = 0 if secure else 1
+                return self.cp15_registers[3][0][0][0][bank]
+        elif crn == 5:
+            if opc1 == 0 and crm == 0 and opc2 == 0:
+                # DFSR
+                if not privileged:
+                    raise AccessViolation()
+                
+                bank = 0 if secure else 1
+                return self.cp15_registers[5][0][0][0][bank]
+            elif opc1 == 0 and crm == 0 and opc2 == 1:
+                # IFSR
+                if not privileged:
+                    raise AccessViolation()
+                
+                bank = 0 if secure else 1
+                return self.cp15_registers[5][0][0][1][bank]
+        elif crn == 6:
+            if opc1 == 0 and crm == 0 and opc2 == 0:
+                # DFAR
+                if not privileged:
+                    raise AccessViolation()
+                
+                bank = 0 if secure else 1
+                return self.cp15_registers[6][0][0][0][bank]
+            elif opc1 == 0 and crm == 0 and opc2 == 2:
+                # IFAR
+                if not privileged:
+                    raise AccessViolation()
+                
+                bank = 0 if secure else 1
+                return self.cp15_registers[6][0][0][2][bank]
+        elif crn == 7:
+            #TODO: Not sure yet
+            raise AccessViolation()
+        elif crn == 8:
+            # read-only
+            raise AccessViolation()
         elif crn == 12:
             # Security Extension registers.
             if opc1 == 0 and crm == 0 and opc2 == 0:
@@ -1259,13 +2242,18 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                     raise AccessViolation()
                 
                 return self.cp15_registers[12][0][1][0][0]
+        
+        raise NoRegisterFound()
     
     def _CP15_write(self, crn, opc1, crm, opc2, value):
         privileged = self._IsPrivilegedMode()
         secure = self._IsSecure()
-        user_mode = self._IsUserMode()
         
-        if crn == 1:
+        if crn == 0:
+            if opc1 == 0 and crm == 0 and opc2 == 0:
+                # MIDR ( read-only )
+                raise AccessViolation()
+        elif crn == 1:
             if opc1 == 0 and crm == 0 and opc2 == 0:
                 # SCTRL
                 if not privileged:
@@ -1273,12 +2261,90 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 
                 bank = 0 if secure else 1
                 self.cp15_registers[1][0][0][0][bank].value = value
+                return
             if opc1 == 0 and crm == 1 and opc2 == 0:
                 # SCR
                 if not (privileged and secure):
                     raise AccessViolation()
                 
                 self.cp15_registers[1][0][1][0][0].value = value
+                return
+        elif crn == 2:
+            if opc1 == 0 and crm == 0 and opc2 == 0:
+                # TTBR0
+                bank = 0 if secure else 1
+                self.cp15_registers[1][0][0][0][bank].value = value
+                return
+            elif opc1 == 0 and crm == 0 and opc2 == 1:
+                # TTBR0
+                bank = 0 if secure else 1
+                self.cp15_registers[1][0][0][0][bank].value = value
+                return
+            elif opc1 == 0 and crm == 0 and opc2 == 2:
+                # TTBCR
+                if not privileged:
+                    raise AccessViolation()
+
+                bank = 0 if secure else 1
+                self.cp15_registers[1][0][0][0][bank].value = value
+                return
+        elif crn == 3:
+            if opc1 == 0 and crm == 0 and opc2 == 0:
+                # DACR
+                if not privileged:
+                    raise AccessViolation()
+
+                bank = 0 if secure else 1
+                self.cp15_registers[3][0][0][0][bank].value = value
+                return
+        elif crn == 5:
+            if opc1 == 0 and crm == 0 and opc2 == 0:
+                # DFSR
+                if not privileged:
+                    raise AccessViolation()
+                
+                bank = 0 if secure else 1
+                self.cp15_registers[5][0][0][0][bank].value = value
+                return
+            elif opc1 == 0 and crm == 0 and opc2 == 1:
+                # IFSR
+                if not privileged:
+                    raise AccessViolation()
+                
+                bank = 0 if secure else 1
+                self.cp15_registers[5][0][0][1][bank].value = value
+                return
+        elif crn == 6:
+            if opc1 == 0 and crm == 0 and opc2 == 0:
+                # DFAR
+                if not privileged:
+                    raise AccessViolation()
+                
+                bank = 0 if secure else 1
+                self.cp15_registers[6][0][0][0][bank].value = value
+                return
+            elif opc1 == 0 and crm == 0 and opc2 == 2:
+                # IFAR
+                if not privileged:
+                    raise AccessViolation()
+                
+                bank = 0 if secure else 1
+                self.cp15_registers[6][0][0][2][bank].value = value
+                return
+        elif crn == 7:
+            #TODO: Not sure about this yet.
+            if not privileged:
+                    raise AccessViolation()
+            #TODO: Implement real cache simulation
+            if opc1 == 0 and crm == 5 and opc2 == 0:
+                return
+        elif crn == 8:
+            #TODO: Implement TLB Simulation
+            if not privileged:
+                raise AccessViolation()
+            if opc1 == 0 and crm == 7 and opc2 == 0:
+                # TLBIALL
+                return
         elif crn == 12:
             # Security Extension registers.
             if opc1 == 0 and crm == 0 and opc2 == 0:
@@ -1288,6 +2354,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 
                 bank = 0 if secure else 1
                 self.cp15_registers[12][0][0][0][bank].value = value & (~0x1F)
+                return
             elif opc1 == 0 and crm == 0 and opc2 == 1:
                 # MVBAR ( Banked , read/write )
                 if not privileged:
@@ -1295,9 +2362,12 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 
                 bank = 0 if secure else 1
                 self.cp15_registers[12][0][0][1][bank].value = value & (~0x1F)
+                return
             elif opc1 == 0 and crm == 1 and opc2 == 0:
                 # ISR ( read-only )
                 raise AccessViolation()
+
+        raise NoRegisterFound()
     
     def set_ip(self, address):
         self.ip.value = address.value

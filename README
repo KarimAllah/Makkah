@@ -1,1 +1,1 @@
-An emulator framework written in python. Mainly written to be modular and allow fast prototyping of new SoCs/Controllers.
+A simulator framework written in python. Mainly written to be extremely modular and allow fast prototyping of new SoCs/Controllers.

@@ -17,11 +17,11 @@ class SimpleMemory(AbstractBankedAddressableObject):
     def _read(self, address):
         address = address & ~3
         value = self._memory[address]
-        self.logger.info("Reading value (%s) from address (%s)", value, address)
+        self.logger.info("Reading value (%s) from address (%s)", hex(value), hex(address))
         return c_uint32(value)
     
     def _write(self, address, value):
-        self.logger.info("Writing value (%s) to address (%s)", value, address)
+        self.logger.info("Writing value (%s) to address (%s)", hex(value.value), hex(address))
         address = address & ~3
         self._memory[address] = value.value
 
@@ -49,11 +49,11 @@ class SimpleBankedMemory(AbstractBankedAddressableObject):
     def _read(self, address, bank=0):
         address = address & ~3
         value = self._memory[address]
-        self.logger.info("Reading value (%s) from address (%s)", value, address)
+        self.logger.info("Reading value (%s) from address (%s)", hex(value), hex(address))
         return c_uint32(value)
     
     def _write(self, address, value, bank=0):
-        self.logger.info("Writing value (%s) to address (%s)", value, address)
+        self.logger.info("Writing value (%s) to address (%s)", hex(value), hex(address))
         address = address & ~3
         self._memory[address] = value.value
         

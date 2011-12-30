@@ -28,9 +28,25 @@ class OMAP4(object):
         rom_file.close()
         
         self.l3_ocm_ram = SimpleMemory("l3 ocm ram", 56, False)
+        self.dmm_registers = SimpleMemory("dmm registers", 32 * 1024, False)
+        self.emif1_registers = SimpleMemory("emif1 registers", 16 * 1024, False)
+        self.emif2_registers = SimpleMemory("emif2 registers", 16 * 1024, False)
         
+        self.l4_cfg_domain = SimpleMemory("l4 configuration domain", 16 * 1024, False)
+        
+        #rom
         self.sys_bus.attach_slave(self.rom, memory_map.MPU_ROM_START, memory_map.MPU_ROM_END)
+        #ram
         self.sys_bus.attach_slave(self.l3_ocm_ram, memory_map.L3_OCM_RAM_START, memory_map.L3_OCM_RAM_END)
+        #dmm
+        self.sys_bus.attach_slave(self.dmm_registers, memory_map.DMM_REGISTERS_START, memory_map.DMM_REGISTERS_END)
+        #emif1
+        self.sys_bus.attach_slave(self.emif1_registers, memory_map.EMIF1_REGISTERS_START, memory_map.EMIF1_REGISTERS_END)
+        #emif2
+        self.sys_bus.attach_slave(self.emif2_registers, memory_map.EMIF2_REGISTERS_START, memory_map.EMIF2_REGISTERS_END)
+        
+        #l4_cfg domain
+        self.sys_bus.attach_slave(self.l4_cfg_domain, memory_map.L4_CFG_DOMAIN_START, memory_map.L4_CFG_DOMAIN_END)
         
         self.mpu = CORTEXA9MPU('OMAP4 cortex-a9 mpu', self.sys_bus)
         
@@ -70,14 +86,6 @@ class CORTEXA9MPU(object):
 #        destination = destination + 510
 #        data = nand_device.read(next, size)
 #        self.bus.write_chunk(destination, data, size)
-#        
-#        # Branch to the beginning of the image.
-#        some_address = 0 # Address of boot structure.
-#        boot_parameters = (c_uint32 * 3)()
-#        boot_parameters[0] = 0
-#        boot_parameters[1] = 0x3 | (0 << 8) | (0 << 16)
-#        
-#        self.bus.write_chunk(some_address, boot_parameters, 3 * 4)
 #         
 #        self.cpu0.set_register('r0', some_address)
 #        self.cpu0.set_ip(dst)
@@ -87,7 +95,19 @@ class CORTEXA9MPU(object):
         ram_vecs_file.close()
         
         temp_os_file = BinaryFileReader(TINYOS_PATH)
+        os_size = temp_os_file.getsize()
+        boot_struct_address = memory_map.L3_OCM_RAM_START + os_size
         temp_os_file.readin(self.bus.write, temp_os_file.getsize(), memory_map.L3_OCM_RAM_START)
         
+        boot_parameters = []
+        boot_parameters.append(c_uint32(0))
+        boot_parameters.append(c_uint32(0))
+        boot_parameters.append(c_uint32(0x3 | (0 << 8) | (0 << 16)))
+        
+        for index in range(3):
+            self.bus.write(boot_struct_address + (index<<2), boot_parameters[index])
+            
+        
+        self.cpu0.register_write(0, c_uint32(boot_struct_address))
         self.cpu0.set_ip(c_uint32(memory_map.L3_OCM_RAM_START))
         self.cpu0.run()
