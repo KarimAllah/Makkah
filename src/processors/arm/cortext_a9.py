@@ -106,6 +106,32 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     LDR_LITERAL_RT_SHIT     = 12
     LDR_LITERAL_U           = 0x00800000
     
+    LDR_REGISTER_OP_MASK    = 0x0E500010
+    LDR_REGISTER_OP         = 0x06100000
+    LDR_REGISTER_P          = 0x01000000
+    LDR_REGISTER_U          = 0x00800000
+    LDR_REGISTER_W          = 0x00200000
+    LDR_REGISTER_RN         = 0x000F0000
+    LDR_REGISTER_RN_SHIFT   = 16
+    LDR_REGISTER_RT         = 0x0000F000
+    LDR_REGISTER_RT_SHIFT   = 12
+    LDR_REGISTER_IMM        = 0x00000F80
+    LDR_REGISTER_IMM_SHIFT  = 7
+    LDR_REGISTER_TYPE       = 0x00000060
+    LDR_REGISTER_TYPE_SHIFT = 5
+    LDR_REGISTER_RM         = 0x0000000F
+    
+    LDRB_IMMEDIATE_OP_MASK  = 0x0E500000
+    LDRB_IMMEDIATE_OP       = 0x04500000
+    LDRB_IMMEDIATE_P        = 0x01000000
+    LDRB_IMMEDIATE_U        = 0x00800000
+    LDRB_IMMEDIATE_W        = 0x00200000
+    LDRB_IMMEDIATE_RN       = 0x000F0000
+    LDRB_IMMEDIATE_RN_SHIFT = 16
+    LDRB_IMMEDIATE_RT       = 0x0000F000
+    LDRB_IMMEDIATE_RT_SHIFT = 12
+    LDRB_IMMEDIATE_IMM      = 0x00000FFF
+    
     # STR
     STR_REGISTER_OP_MASK    = 0x06500010
     STR_REGISTER_OP         = 0x06000000
@@ -357,6 +383,29 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     ORR_REGISTER_SH_TYPE    = 0x00000060
     ORR_REGISTER_SH_TYPE_SHIFT= 5
     ORR_REGISTER_SH_RM      = 0x0000000F
+    
+    # AND
+    AND_IMMEDIATE_OP_MASK   = 0x0FE00000
+    AND_IMMEDIATE_OP        = 0x02000000
+    AND_IMMEDIATE_S         = 0x00100000
+    AND_IMMEDIATE_RN        = 0x000F0000
+    AND_IMMEDIATE_RN_SHIFT  = 16
+    AND_IMMEDIATE_RD        = 0x0000F000
+    AND_IMMEDIATE_RD_SHIFT  = 12
+    AND_IMMEDIATE_IMM       = 0x00000FFF
+    
+    AND_REGISTER_OP_MASK    = 0x0FE00010
+    AND_REGISTER_OP         = 0x00000000
+    AND_REGISTER_S          = 0x00100000
+    AND_REGISTER_RN         = 0x000F0000
+    AND_REGISTER_RN_SHIFT   = 16
+    AND_REGISTER_RD         = 0x0000F000
+    AND_REGISTER_RD_SHIFT   = 12
+    AND_REGISTER_IMM        = 0x00000F80
+    AND_REGISTER_IMM_SHIFT  = 7
+    AND_REGISTER_TYPE       = 0x00000060
+    AND_REGISTER_TYPE_SHIFT = 5
+    AND_REGISTER_RM         = 0x0000000F
     
     # SVC
     SVC_OP_MASK             = 0x0F000000
@@ -638,7 +687,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     
     def init_ophandlers(self):
         def def_LDR_LITERAL_OP(op):
-            # NOTE: Always write this before LDR_IMMEDIATE_OP
+            skip = False
             # LDR (literal)
             add = ((op & self.LDR_LITERAL_U) != 0)
             rt = (op & self.LDR_LITERAL_RT) >> self.LDR_LITERAL_RT_SHIT
@@ -646,7 +695,18 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             base = self.get_ip() & (~ 0x3)
             address = (base + imm) if add else (base - imm)
             data = self.mmu_read(address)
-            self.register_write(rt, data)
+            if rt == 0xF:
+                if not (address & 3):
+                    self._LoadWritePC(data)
+                    skip = True
+                else:
+                    raise Unpredictable()
+            elif not (address & 3):
+                self.register_write(rt, data)
+            else:
+                raise NotImplementedOpCode()
+            
+            return skip
             
         def def_LDR_IMMEDIATE_OP(op):
             # LDR (immediate, ARM)
@@ -655,16 +715,16 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             imm = (op & self.LDR_IMMEDIATE_IMM)
             
             if rn == 0xF:
-                self.op_handlers['LDR_LITERAL_OP'](op)
-                return
+                skip = self.op_handlers['LDR_LITERAL_OP'](op)
+                return skip
             
             if not (op & self.LDR_IMMEDIATE_P) and op & self.LDR_IMMEDIATE_W:
                 #FIXME see LDRT
                 raise NotImplementedOpCode()
             
             if rn == 0xD and not (op & self.LDR_IMMEDIATE_P) and op & self.LDR_IMMEDIATE_U and not (op & self.LDR_IMMEDIATE_W) and imm == 0x4:
-                self.op_handlers['POP_OP2'](op)
-                return
+                skip = self.op_handlers['POP_OP2'](op)
+                return skip
 
             index = (op & self.LDR_IMMEDIATE_P) != 0
             add = (op & self.LDR_IMMEDIATE_U) != 1
@@ -678,6 +738,48 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 self.register_write(rn, offset_addr)
 
             self.register_write(rt, data)
+            return False
+            
+        def def_LDR_REGISTER_OP(op):
+            skip = False
+            p = op & self.LDR_REGISTER_P
+            w = op & self.LDR_REGISTER_W
+            u = op & self.LDR_REGISTER_U
+            rt = (op & self.LDR_REGISTER_RT) >> self.LDR_REGISTER_RT_SHIFT
+            rn = (op & self.LDR_REGISTER_RN) >> self.LDR_REGISTER_RN_SHIFT
+            imm = (op & self.LDR_REGISTER_IMM) >> self.LDR_REGISTER_IMM_SHIFT
+            type = (op & self.LDR_REGISTER_TYPE) >> self.LDR_REGISTER_TYPE_SHIFT
+            rm = op & self.LDR_REGISTER_RM
+            if p == 0 and w != 0:
+                #FIXME see LDRT
+                raise NotImplementedOpCode()
+            index = p != 0
+            add = u != 0
+            wback = (p == 0) or (w != 0)
+            shift_t, shift_n = self._DecodeImmShift(type, imm)
+            if rm == 0xF:
+                raise Unpredictable()
+            if wback and (rn == 0xF or rn == rt):
+                raise Unpredictable()
+            
+            carry = self.cpsr.value & self.PROCESSOR_C and 1
+            offset = self._SHIFT(self.register_read(rm).value, shift_t, shift_n, carry)
+            value = self.register_read(rn).value
+            offset_addr = (value + offset) if add else (value - offset)
+            address = offset_addr if index else self.register_read(rn)
+            data = self.mmu_read(address)
+            if wback:
+                self.register_write(rn, c_uint32(data))
+            if rt == 0xF:
+                if address & 3 == 0:
+                    self._LoadWritePC(data)
+                    skip = True
+                else:
+                    raise Unpredictable()
+            #Check the reference her for more states
+            else:
+                self.register_write(rt, data)
+            return skip
             
         def def_STR_IMMEDIATE_OP(op):
             p = op & self.STR_IMMEDIATE_P
@@ -692,8 +794,8 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 raise NotImplementedOpCode()
             
             if rn == 0xD and p and (not u) and w and imm == 0x4:
-                self.op_handlers['PUSH_OP2'](op)
-                return
+                skip = self.op_handlers['PUSH_OP2'](op)
+                return skip
             
             index = (p != 0)
             add = (u != 0)
@@ -709,6 +811,8 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             
             if wback:
                 self.register_write(rn, c_uint32(offset_addr))
+                
+            return False
         
         def def_STR_REGISTER_OP(op):
             p = op & self.STR_REGISTER_P
@@ -750,20 +854,25 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             if wback:
                 self.register_write(rn, c_uint32(offset_addr))
                 
+            return False
+                
         def def_B_OP(op):
             imm = self._SignExtend26to32((op & self.B_IMM) << 2)
             self.set_ip(c_uint32(self.get_ip() + imm))
+            return True
 
         def def_BL_OP(op):
             imm = self._SignExtend26to32((op & self.B_IMM) << 2)
             lr = self.get_lr_link()
             self.register_write(14, c_uint32(lr))
             self.set_ip(c_uint32(self.get_ip() + imm))
+            return True
         
         def def_BX_OP(op):
             rm = op & self.BX_RM
             address = self.register_read(rm)
             self._BXWritePC(address)
+            return True
 
         def def_LDM_OP(op):
             w = op & self.LDM_W
@@ -771,8 +880,8 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             bit_count = self._BitCount(register_list)
             rn = (op & self.LDM_RN) >> self.LDM_RN_SHIFT
             if w != 0 and rn == 0xD and bit_count >=2:
-                self.op_handlers['POP_OP1'](op)
-                return
+                skip = self.op_handlers['POP_OP1'](op)
+                return skip
             
             wback = (w != 0)
             if rn == 0xF or bit_count < 1:
@@ -793,6 +902,8 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
 
             if wback:
                 self.register_write(rn, c_uint32(address))
+            
+            return False
 
         def def_STM_OP(op):
             w = op & self.LDM_W
@@ -816,6 +927,8 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 raise NotImplementedOpCode()
             if wback:
                 self.register_write(rn, c_uint32(address))
+                
+            return False
 
 
         def def_PUSH_OP1(op):
@@ -840,6 +953,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 raise NotImplementedOpCode()
             
             self.register_read(13).value -= (4 * bit_count)
+            return False
             
         def def_PUSH_OP2(op):
             rt = (op & self.PUSH_OP2_RT) >> self.PUSH_OP2_RT_SHIFT
@@ -852,13 +966,15 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             address = self.register_read(13).value - 4
             self.mmu_write(address, self.register_read(rt))
             self.register_read(13).value -= 4
+            return False
             
         def def_POP_OP1(op):
+            skip = False
             register_list = op & self.POP_OP1_REGISTERS
             bit_count = self._BitCount(register_list)
             if bit_count < 2:
-                self.op_handlers['LDM_OP'](op)
-                return
+                skip = self.op_handlers['LDM_OP'](op)
+                return skip
             if register_list & (1 << 13):
                 raise Unpredictable()
             
@@ -872,10 +988,13 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             
             if register_list & (1 << 15):
                 self._BXWritePC(self.mmu_read(address))
+                skip = True
             
             self.register_read(13).value += (4 * bit_count)
+            return skip
             
         def def_POP_OP2(op):
+            skip = False
             rt = (op & self.POP_OP2_RT) >> self.POP_OP2_RT_SHIFT
             if rt == 0xD:
                 raise Unpredictable()
@@ -884,10 +1003,12 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             
             if rt == 0xF:
                 self._BXWritePC(self.mmu_read(address))
+                skip = True
             else:
                 self.register_write(rt, self.mmu_read(address))
             
             self.register_read(13).value += 4
+            return skip
 
         def def_CMP_REGISTER_OP(op):
             rn = (op & self.CMP_REGISTER_RN) >> self.CMP_REGISTER_RN_SHIFT
@@ -904,6 +1025,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
             self.cpsr.value |= carry and self.PROCESSOR_C
             self.cpsr.value |= overflow and self.PROCESSOR_V
+            return False
         
         def def_CMP_IMMEDIATE_OP(op):
             imm = op & self.CMP_IMMEDIATE_IMM
@@ -915,6 +1037,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
             self.cpsr.value |= carry and self.PROCESSOR_C
             self.cpsr.value |= overflow and self.PROCESSOR_V
+            return False
         
         def def_TST_IMMEDIATE_OP(op):
             rn = (op & self.TST_IMMEDIATE_RN) >> self.TST_IMMEDIATE_RN_SHIFT
@@ -925,6 +1048,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
             self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
             self.cpsr.value |= carry and self.PROCESSOR_C
+            return False
         
         def def_MSR_REGISTER_OP(op):
             #TODO:Support non-maskable interrupts
@@ -961,8 +1085,11 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             else:
                 unchanging_bits = value & self._NOT(mask)
                 self.cpsr.value = unchanging_bits | after_mask
+                
+            return False
         
         def def_MVN_IMMEDIATE_OP(op):
+            skip = False
             s = op & self.MVN_IMMEDIATE_S
             set_flags = (s != 0)
             rd = (op & self.MVN_IMMEDIATE_RD) >> self.MVN_IMMEDIATE_RD_SHIFT
@@ -971,14 +1098,15 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             imm, carry = self._ARMExpandImm_C(imm, carry)
             result = self._NOT(imm)
             if rd == 0xF:
-                #TODO see ALUWritePC
-                raise NotImplementedOpCode()
+                self._ALUWritePC(c_uint32(result))
+                skip = True
             else:
                 self.register_write(rd, c_uint32(result))
                 if set_flags:
                     self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
                     self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
                     self.cpsr.value |= carry and self.PROCESSOR_C
+            return skip
             
         def def_MVN_REGISTER_SH_OP(op):
             rd = (op & self.MVN_REGISTER_SH_RD) >> self.MVN_REGISTER_SH_RD_SHIFT
@@ -1002,8 +1130,11 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
                 self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
                 self.cpsr.value |= carry and self.PROCESSOR_C
+            
+            return False
 
         def def_BIC_IMMEDIATE_OP(op):
+            skip = False
             rd = (op & self.BIC_IMMEDIATE_RD) >> self.BIC_IMMEDIATE_RD_SHIFT
             rn = (op & self.BIC_IMMEDIATE_RN) >> self.BIC_IMMEDIATE_RN_SHIFT
             imm = op & self.BIC_IMMEDIATE_IMM
@@ -1018,14 +1149,15 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             imm, carry = self._ARMExpandImm_C(imm, carry)
             result = (self.register_read(rn).value & self._NOT(imm))
             if rd == 0xF:
-                #FIXME ALUWritePC(result)
-                raise NotImplementedOpCode()
+                self._ALUWritePC(c_uint32(result))
+                skip = True
             else:
                 self.register_write(rd, c_uint32(result))
                 if set_flags:
                     self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
                     self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
                     self.cpsr.value |= carry and self.PROCESSOR_C
+            return skip
 
         def def_MRS_OP(op):
             rd = (op & self.MRS_RD) >> self.MRS_RD_SHIFT
@@ -1042,8 +1174,10 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 value &= self.MRS_USER_MASK
             
             self.register_write(rd, c_uint32(value))
+            return False
 
         def def_ORR_REGISTER_OP(op):
+            skip = False
             imm = (op & self.ORR_REGISTER_IMM) >> self.ORR_REGISTER_IMM_SHIFT
             rn = (op & self.ORR_REGISTER_RN) >> self.ORR_REGISTER_RN_SHIFT
             rm = op & self.ORR_REGISTER_RM
@@ -1062,16 +1196,18 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             result = self.register_read(rn).value | shifted
             
             if rd == 0xF:
-                #FIXME ALUWritePC(result)
-                raise NotImplementedOpCode()
+                self._ALUWritePC(c_uint32(result))
+                skip = True
             else:
                 self.register_write(rd, c_uint32(result))
                 if set_flags:
                     self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
                     self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
                     self.cpsr.value |= carry and self.PROCESSOR_C
+            return skip
 
         def def_ORR_IMMEDIATE_OP(op):
+            skip = False
             imm = op & self.ORR_IMMEDIATE_IMM
             rn = (op & self.ORR_IMMEDIATE_RN) >> self.ORR_IMMEDIATE_RN_SHIFT
             rd = (op & self.ORR_IMMEDIATE_RD) >> self.ORR_IMMEDIATE_RD_SHIFT
@@ -1087,14 +1223,15 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             result = self.register_read(rn).value | imm
             
             if rd == 0xF:
-                #FIXME ALUWritePC(result)
-                raise NotImplementedOpCode()
+                self._ALUWritePC(c_uint32(result))
+                skip = True
             else:
                 self.register_write(rd, c_uint32(result))
                 if set_flags:
                     self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
                     self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
                     self.cpsr.value |= carry and self.PROCESSOR_C
+            return skip
 
         def def_ORR_REGISTER_SH_OP(op):
             rd = (op & self.ORR_REGISTER_SH_RD) >> self.ORR_REGISTER_SH_RD_SHIFT
@@ -1119,6 +1256,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                     self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
                     self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
                     self.cpsr.value |= carry and self.PROCESSOR_C
+            return False
                 
         def def_BIC_REGISTER_SH_OP(op):
             rd = (op & self.BIC_REGISTER_SH_RD) >> self.BIC_REGISTER_SH_RD_SHIFT
@@ -1143,6 +1281,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                     self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
                     self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
                     self.cpsr.value |= carry and self.PROCESSOR_C
+            return False
 
         def def_MCR_OP(op):
             opc1 = (op & self.MCR_OPC1) >> self.MCR_OPC1_SHIFT
@@ -1155,6 +1294,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 self._CP15_write(crn, opc1, crm, opc2, self.register_read(rt).value)
             else:
                 raise NotImplementedOpCode()
+            return False
 
         def def_MRC_OP(op):    
             opc1 = (op & self.MRC_OPC1) >> self.MRC_OPC1_SHIFT
@@ -1168,59 +1308,308 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 self.register_write(rt, value)
             else:
                 raise NotImplementedOpCode()
+            return False
 
         def def_LSR_IMMEDIATE_OP(op):
+            skip = False
             imm = (op & self.LSR_IMMEDIATE_IMM) >> self.LSR_IMMEDIATE_IMM_SHIFT
             rd = (op & self.LSR_IMMEDIATE_RD) >> self.LSR_IMMEDIATE_RD_SHIFT
             rm = op & self.LSR_IMMEDIATE_RM
             s = op & self.LSR_IMMEDIATE_S
             set_flags = (s!=0)
             
-            if imm == 0:
-                #FIXME see MOV (Register)
-                raise WrongExecutionFlow()
-            
             _, shift_n = self._DecodeImmShift(0x1, imm)
             carry = self.cpsr.value & self.PROCESSOR_C and 1
             result, carry = self._SHIFT_C(self.register_read(rm).value, self.SRType_LSR, shift_n, carry)
             if rd == 0xF:
-                #FIXME ALUWritePC()
-                raise NotImplementedOpCode()
+                self._ALUWritePC(c_uint32(result))
+                skip = True
             else:
                 self.register_write(rd, c_uint32(result))
                 if set_flags:
                     self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
                     self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
                     self.cpsr.value |= carry and self.PROCESSOR_C
+            return skip
 
         def def_LSL_IMMEDIATE_OP(op):
+            skip = False
             imm = (op & self.LSL_IMMEDIATE_IMM) >> self.LSL_IMMEDIATE_IMM_SHIFT
             rd = (op & self.LSL_IMMEDIATE_RD) >> self.LSL_IMMEDIATE_RD_SHIFT
             rm = op & self.LSL_IMMEDIATE_RM
             s = op & self.LSL_IMMEDIATE_S
             set_flags = (s!=0)
-            
-            if imm == 0:
-                #FIXME see MOV (Register)
-                raise WrongExecutionFlow()
-            
+
             _, shift_n = self._DecodeImmShift(0x0, imm)
             carry = self.cpsr.value & self.PROCESSOR_C and 1
             result, carry = self._SHIFT_C(self.register_read(rm).value, self.SRType_LSL, shift_n, carry)
             if rd == 0xF:
-                #FIXME ALUWritePC()
-                raise NotImplementedOpCode()
+                self._ALUWritePC(c_uint32(result))
+                skip = True
             else:
                 self.register_write(rd, c_uint32(result))
                 if set_flags:
                     self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
                     self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
                     self.cpsr.value |= carry and self.PROCESSOR_C
+            return skip
 
-        self.op_handlers = {
-                    
+        def def_AND_REGISTER_OP(op):
+            skip = False
+            s = op & self.AND_REGISTER_S
+            rn = (op & self.AND_REGISTER_RN) >> self.AND_REGISTER_RN_SHIFT
+            rd = (op & self.AND_REGISTER_RD) >> self.AND_REGISTER_RD_SHIFT
+            rm = op & self.AND_REGISTER_RM
+            imm = (op & self.AND_REGISTER_IMM) >> self.AND_REGISTER_IMM_SHIFT
+            type = (op & self.AND_REGISTER_TYPE) >> self.AND_REGISTER_TYPE_SHIFT
+            set_flags = (s!=0)
+            
+            if rd == 0xF and (s != 0):
+                #FIXME: see SUBS PC, LR and related instructions
+                raise NotImplementedOpCode()
+            
+            carry = self.cpsr.value & self.PROCESSOR_C and 1
+            shift_t, shift_n = self._DecodeImmShift(type, imm)
+            shifted, carry = self._SHIFT_C(self.register_read(rm).value, shift_t, shift_n, carry)
+            result = self.register_read(rn).value | shifted 
+            if rd == 0xF:
+                self._ALUWritePC(c_uint32(result))
+                skip = True
+            else:
+                self.register_write(rd, c_uint32(result))
+                if set_flags:
+                    self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                    self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                    self.cpsr.value |= carry and self.PROCESSOR_C
+            return skip
+
+        def def_AND_IMMEDIATE_OP(op):
+            skip = False
+            rn = (op & self.AND_IMMEDIATE_RN) >> self.AND_IMMEDIATE_RN_SHIFT
+            rd = (op & self.AND_IMMEDIATE_RD) >> self.AND_IMMEDIATE_RD_SHIFT
+            imm = op & self.AND_IMMEDIATE_IMM
+            s = op & self.AND_IMMEDIATE_S
+            set_flags = s != 0
+            
+            if rd == 0xF and s:
+                #FIXME see SUBS PC, LR and related instructions
+                raise NotImplementedOpCode()
+            
+            carry = self.cpsr.value & self.PROCESSOR_C and 1
+            imm, carry = self._ARMExpandImm_C(imm, carry)
+            result = self.register_read(rn).value & imm
+            if rd == 0xF:
+                self._ALUWritePC(c_uint32(result))
+                skip = True
+            else:
+                self.register_write(rd, c_uint32(result))
+                if set_flags:
+                    self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                    self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                    self.cpsr.value |= carry and self.PROCESSOR_C
+            return skip
+        
+        def def_ADD_IMMEDIATE_OP(op):
+            rd = (op & self.ADD_IMMEDIATE_RD) >> self.ADD_IMMEDIATE_RD_SHIFT
+            rn = (op & self.ADD_IMMEDIATE_RN) >> self.ADD_IMMEDIATE_RN_SHIFT
+            set_flags = op & self.ADD_IMMEDIATE_S
+            imm = op & self.ADD_IMMEDIATE_IMM
+            result, carry, overflow = self._AddWithCarry(self.register_read(rn).value, imm, 0)
+            
+            if rn == 0xF and not set_flags:
+                #FIXME see ADR
+                raise NotImplementedOpCode()
+            if rn == 0xD:
+                #FIXME see ADD (SP plus immediate)
+                raise NotImplementedOpCode()
+                
+            if rd == 0xF and set_flags:
+                #FIXME see SUBS PC, LR and related instructions.
+                raise NotImplementedOpCode()
+            
+            self.register_write(rd, c_uint32(result))
+            if set_flags:
+                self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                self.cpsr.value |= carry and self.PROCESSOR_C
+                self.cpsr.value |= overflow and self.PROCESSOR_V
+            return False
+
+        def def_ADD_REGISTER_OP(op):
+            skip = False
+            rd = (op & self.ADD_REGISTER_RD) >> self.ADD_REGISTER_RD_SHIFT
+            rn = (op & self.ADD_REGISTER_RN) >> self.ADD_REGISTER_RN_SHIFT
+            imm = (op & self.ADD_REGISTER_IMM) >> self.ADD_REGISTER_IMM_SHIFT
+            type = (op & self.ADD_REGISTER_TYPE) >> self.ADD_REGISTER_TYPE_SHIFT
+            shift_t, shift_n = self._DecodeImmShift(type, imm)
+            rm = op & self.ADD_REGISTER_RM
+            s = op & self.ADD_REGISTER_S
+            set_flags = (s != 0)
+            
+            if rd == 0xF and s:
+                #FIXME see SUBS PC, LR and related instructions
+                raise NotImplementedOpCode()
+            
+            if rn == 0xD:
+                #FIXME see ADD (SP plus register)
+                raise NotImplementedOpCode()
+
+            carry = self.cpsr.value & self.PROCESSOR_C and 1
+            shifted = self._SHIFT(self.register_read(rm).value, shift_t, shift_n, carry)
+            result, carry, overflow = self._AddWithCarry(self.register_read(rn).value, shifted, 0)
+            
+            if rd == 0xF:
+                self._ALUWritePC(c_uint32(result))
+                skip = True
+            else:
+                self.register_write(rd, c_uint32(result))
+                
+                if set_flags:
+                    self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                    self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                    self.cpsr.value |= carry and self.PROCESSOR_C
+                    self.cpsr.value |= overflow and self.PROCESSOR_V
+            return skip
+
+        def def_SUB_REGISTER_OP(op):
+            skip = False
+            imm = (op & self.SUB_REGISTER_IMM) >> self.SUB_REGISTER_IMM_SHIFT
+            rn = (op & self.SUB_REGISTER_RN) >> self.SUB_REGISTER_RN_SHIFT
+            rd = (op & self.SUB_REGISTER_RD) >> self.SUB_REGISTER_RD_SHIFT
+            type = (op & self.SUB_REGISTER_TYPE) >> self.SUB_REGISTER_TYPE_SHIFT
+            rm = op & self.SUB_REGISTER_RM
+            s = op & self.SUB_REGISTER_S
+            set_flags = (s != 0)
+            shift_t, shift_n = self._DecodeImmShift(type, imm)
+            
+            if rd == 0xF and set_flags:
+                #FIXME SUBS PC, LR and related instructions
+                raise NotImplementedOpCode()
+                
+            if rn == 0xD:
+                #FIXME see SUB (SP minus register)
+                raise NotImplementedOpCode()
+            
+            carry = self.cpsr.value & self.PROCESSOR_C and 1
+            shifted = self._SHIFT(self.register_read(rm).value, shift_t, shift_n, carry)
+            complemented_shifted = c_uint32(-shifted).value
+            result, carry, overflow = self._AddWithCarry(self.register_read(rn).value, complemented_shifted, 0)
+            
+            if rd == 0xF:
+                self._ALUWritePC(c_uint32(result))
+                skip = True
+            else:
+                self.register_write(rd, c_uint32(result))
+                if set_flags:
+                    self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                    self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                    self.cpsr.value |= carry and self.PROCESSOR_C
+                    self.cpsr.value |= overflow and self.PROCESSOR_V
+            return skip
+
+        def def_LDRB_IMMEDIATE_OP(op):
+            rn = (op & self.LDRB_IMMEDIATE_RN) >> self.LDRB_IMMEDIATE_RN_SHIFT
+            rt = (op & self.LDRB_IMMEDIATE_RT) >> self.LDRB_IMMEDIATE_RT_SHIFT
+            p = op & self.LDRB_IMMEDIATE_P
+            u = op & self.LDRB_IMMEDIATE_U
+            w = op & self.LDRB_IMMEDIATE_W
+            imm = op & self.LDRB_IMMEDIATE_IMM
+            
+            if rn == 0xF:
+                #FIXME see LDRB literal
+                raise NotImplementedOpCode()
+            if not p and w != 0:
+                #FIXME see LDRBT
+                raise NotImplementedOpCode()
+            
+            index = p != 0
+            add = u != 0
+            wback = (p == 0) or (w != 0)
+            
+            if rt == 0xF or (wback and rt == rn):
+                raise Unpredictable()
+            
+            value = self.register_read(rn).value
+            offset_addr = (value + imm) if add else (value - imm)
+            address = offset_addr if index else value
+            tmp_value = self.mmu_read(address).value
+            self.register_write(rt, c_uint32(tmp_value & 0xFF))
+            if wback:
+                self.register_write(rn, c_uint32(offset_addr))
+            return False
+
+        def def_SUB_IMMEDIATE_OP(op):
+            skip = False
+            imm = op & self.SUB_IMMEDIATE_IMM
+            rn = (op & self.SUB_IMMEDIATE_RN) >> self.SUB_IMMEDIATE_RN_SHIFT
+            rd = (op & self.SUB_IMMEDIATE_RD) >> self.SUB_IMMEDIATE_RD_SHIFT
+            set_flags = ((op & self.SUB_IMMEDIATE_S) != 0)
+            imm = self._ARMExpandImm(imm)
+            
+            if rd == 0xF and set_flags:
+                #FIXME SUBS PC, LR and related instructions
+                raise NotImplementedOpCode()
+                
+            if rn == 0xD:
+                #FIXME see SUB (SP minus register)
+                raise NotImplementedOpCode()
+
+            result, carry, overflow = self._AddWithCarry(self.register_read(rn).value, self._NOT(imm), 1)
+            
+            if rd == 0xF:
+                self._ALUWritePC(c_uint32(result))
+                skip = True
+            else:
+                self.register_write(rd, c_uint32(result))
+                if set_flags:
+                    self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                    self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                    self.cpsr.value |= carry and self.PROCESSOR_C
+                    self.cpsr.value |= overflow and self.PROCESSOR_V
+            return skip
+        
+        def def_MOV_IMMEDIATE_OP1(op):
+            # FIXME
+            skip = False
+            rd = (op & self.MOV_IMMEDIATE_OP1_RD) >> self.MOV_IMMEDIATE_OP1_RD_SHIFT
+            s = op & self.MOV_IMMEDIATE_OP1_S
+            set_flags = (s!=0)
+            imm = op & self.MOV_IMMEDIATE_OP1_IMM
+            carry = self.cpsr.value & self.PROCESSOR_C and 1
+            result, carry = self._ARMExpandImm_C(imm, carry)
+            if rd == 0xF:
+                self._ALUWritePC(c_uint32(result))
+                skip = True
+            else:
+                self.register_write(rd, c_uint32(result))
+                if set_flags:
+                    self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
+                    self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
+                    self.cpsr.value |= carry and self.PROCESSOR_C
+            return skip
+
+        def def_MOV_REGISTER_OP(op):
+            skip = False
+            rd = (op & self.MOV_REGISTER_RD) >> self.MOV_REGISTER_RD_SHIFT
+            rm = op & self.MOV_REGISTER_RM
+            s = op & self.MOV_REGISTER_S
+            set_flags = (s != 0)
+            result = self.register_read(rm)
+            if rd == 0xF:
+                self._ALUWritePC(result)
+                skip = True
+            else:
+                self.register_write(rd, result)
+                if set_flags:
+                    self.cpsr.value |= (result.value & 0x80000000) and self.PROCESSOR_N
+                    self.cpsr.value |= (result.value == 0) and self.PROCESSOR_Z
+            return skip
+            
+        self.op_handlers = {            
                             'LDR_LITERAL_OP'    : def_LDR_LITERAL_OP,
                             'LDR_IMMEDIATE_OP'  : def_LDR_IMMEDIATE_OP,
+                            'LDRB_IMMEDIATE_OP' : def_LDRB_IMMEDIATE_OP,
+                            'LDR_REGISTER_OP'   : def_LDR_REGISTER_OP,
                             'STR_IMMEDIATE_OP'  : def_STR_IMMEDIATE_OP,
                             'STR_REGISTER_OP'   : def_STR_REGISTER_OP,
                             'B_OP'              : def_B_OP,
@@ -1241,13 +1630,21 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                             'BIC_IMMEDIATE_OP'  : def_BIC_IMMEDIATE_OP,
                             'BIC_REGISTER_SH_OP': def_BIC_REGISTER_SH_OP,
                             'MRS_OP'            : def_MRS_OP,
+                            'ADD_IMMEDIATE_OP'  : def_ADD_IMMEDIATE_OP,
+                            'ADD_REGISTER_OP'   : def_ADD_REGISTER_OP,
+                            'SUB_REGISTER_OP'   : def_SUB_REGISTER_OP,
+                            'SUB_IMMEDIATE_OP'  : def_SUB_IMMEDIATE_OP,
                             'ORR_REGISTER_OP'   : def_ORR_REGISTER_OP,
                             'ORR_IMMEDIATE_OP'  : def_ORR_IMMEDIATE_OP,
                             'ORR_REGISTER_SH_OP': def_ORR_REGISTER_SH_OP,
+                            'AND_REGISTER_OP'   : def_AND_REGISTER_OP,
+                            'AND_IMMEDIATE_OP'  : def_AND_IMMEDIATE_OP,
                             'MCR_OP'            : def_MCR_OP,
                             'MRC_OP'            : def_MRC_OP,
                             'LSR_IMMEDIATE_OP'  : def_LSR_IMMEDIATE_OP,
-                            'LSL_IMMEDIATE_OP'  : def_LSL_IMMEDIATE_OP
+                            'LSL_IMMEDIATE_OP'  : def_LSL_IMMEDIATE_OP,
+                            'MOV_IMMEDIATE_OP1' : def_MOV_IMMEDIATE_OP1,
+                            'MOV_REGISTER_OP'   : def_MOV_REGISTER_OP
                             }
         
     def init_registers(self):
@@ -1559,69 +1956,51 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     SVC_COPROC_INS              = 0x0C000000
     
     def execute(self):
-        #import ipdb;ipdb.set_trace()
-#        if self.ip.value == 0x40301bf0:
-#            import ipdb;ipdb.set_trace()
-            
         self._TakeException()
-        op = self.fetch_next_op()
+        skip = False
+        self.op = op = self.fetch_next_op()
+        
+        if global_env.STEPPING:
+            for callback in global_env.STEPPING_callacks:
+                callback(self)
+                
+        if op in global_env.IMPORTANT_ops or self.ip.value in global_env.IMPORTANT_IPs:
+            for callback in global_env.IMPORTANT_callbacks:
+                callback(self)
         
         condition = (op & self.CONDITION_MASK) >> self.CONDITION_MASK_SHIFT
         
         proceed = False
+        h_cond = condition >> 1
+        l_cond = condition & 1
         if condition == 14:
             proceed = True
-        elif condition == 0:
-            if self.cpsr.value & self.PROCESSOR_Z:
-                proceed = True
-        elif condition == 1:
-            if not (self.cpsr.value & self.PROCESSOR_Z):
-                proceed = True
-        elif condition == 2:
-            if self.cpsr.value & self.PROCESSOR_C:
-                proceed = True
-        elif condition == 3:
-            if not (self.cpsr.value & self.PROCESSOR_C):
-                proceed = True
-        elif condition == 4:
-            if self.cpsr.value & self.PROCESSOR_Z:
-                proceed = True
-        elif condition == 5:
-            if not (self.cpsr.value & self.PROCESSOR_Z):
-                proceed = True
-        elif condition == 6:
-            if self.cpsr.value & self.PROCESSOR_V:
-                proceed = True
-        elif condition == 7:
-            if not (self.cpsr.value & self.PROCESSOR_V):
-                proceed = True
-        elif condition == 8:
-            if (self.cpsr.value & self.PROCESSOR_C) and (not (self.cpsr.value & self.PROCESSOR_Z)):
-                proceed = True
-        elif condition == 9:
-            if (not (self.cpsr.value & self.PROCESSOR_C)) and (self.cpsr.value & self.PROCESSOR_Z):
-                proceed = True
-        elif condition == 10:
-            overflow = ((self.cpsr.value & self.PROCESSOR_V) != 0)
-            negative = ((self.cpsr.value & self.PROCESSOR_N) != 0)
-            if overflow == negative:
-                proceed = True
-        elif condition == 11:
-            overflow = ((self.cpsr.value & self.PROCESSOR_V) != 0)
-            negative = ((self.cpsr.value & self.PROCESSOR_N) != 0)
-            if overflow != negative:
-                proceed = True
-        elif condition == 12:
-            overflow = ((self.cpsr.value & self.PROCESSOR_V) != 0)
-            negative = ((self.cpsr.value & self.PROCESSOR_N) != 0)
-            if (overflow == negative) and not (self.cpsr.value & self.PROCESSOR_Z):
-                proceed = True
-        elif condition == 13:
-            overflow = ((self.cpsr.value & self.PROCESSOR_V) != 0)
-            negative = ((self.cpsr.value & self.PROCESSOR_N) != 0)
-            if (overflow != negative) and (self.cpsr.value & self.PROCESSOR_Z):
-                proceed = True
-        
+        else:
+            if h_cond == 0:
+                res = self.cpsr.value & self.PROCESSOR_Z
+            elif h_cond == 1:
+                res = self.cpsr.value & self.PROCESSOR_C
+            elif h_cond == 2:
+                res = self.cpsr.value & self.PROCESSOR_N
+            elif h_cond == 3:
+                res = self.cpsr.value & self.PROCESSOR_V
+            elif h_cond == 4:
+                res = self.cpsr.value & self.PROCESSOR_C and not self.cpsr.value & self.PROCESSOR_Z
+            elif h_cond == 5:
+                overflow = ((self.cpsr.value & self.PROCESSOR_V) != 0)
+                negative = ((self.cpsr.value & self.PROCESSOR_N) != 0)
+                res = overflow == negative
+            elif h_cond == 6:
+                overflow = ((self.cpsr.value & self.PROCESSOR_V) != 0)
+                negative = ((self.cpsr.value & self.PROCESSOR_N) != 0)
+                zero = ((self.cpsr.value & self.PROCESSOR_Z) != 0)
+                res = (overflow == negative) and zero
+            elif h_cond == 7:
+                res = True 
+
+            if l_cond == 1:
+                proceed = not res
+
         if not proceed:
             self.next_op()
             return
@@ -1629,157 +2008,48 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
         if (op & self.LOAD_STORE_INS_MASK) == self.LOAD_STORE_INS:
             # Load/store word and unsigned byte mask
             if (op & self.LDR_LITERAL_OP_MASK) == self.LDR_LITERAL_OP:
-                self.op_handlers['LDR_LITERAL_OP'](op)
+                skip = self.op_handlers['LDR_LITERAL_OP'](op)
             elif (op & self.LDR_IMMEDIATE_OP_MASK) == self.LDR_IMMEDIATE_OP:
-                self.op_handlers['LDR_IMMEDIATE_OP'](op)
+                skip = self.op_handlers['LDR_IMMEDIATE_OP'](op)
+            elif (op & self.LDRB_IMMEDIATE_OP_MASK) == self.LDRB_IMMEDIATE_OP:
+                skip = self.op_handlers['LDRB_IMMEDIATE_OP'](op)
+            elif (op & self.LDR_REGISTER_OP_MASK) == self.LDR_REGISTER_OP:
+                skip = self.op_handlers['LDR_REGISTER_OP'](op)
             elif (op & self.STR_IMMEDIATE_OP_MASK) == self.STR_IMMEDIATE_OP:
-                self.op_handlers['STR_IMMEDIATE_OP'](op)
+                skip = self.op_handlers['STR_IMMEDIATE_OP'](op)
             elif (op & self.STR_REGISTER_OP_MASK) == self.STR_REGISTER_OP:
-                self.op_handlers['STR_REGISTER_OP'](op)
+                skip = self.op_handlers['STR_REGISTER_OP'](op)
             else:
+                import ipdb;ipdb.set_trace()
                 raise NotImplementedOpCode()
         elif (op & self.BRANCH_INS_MASK) == self.BRANCH_INS:
             if (op & self.B_OP_MASK) == self.B_OP:
-                self.op_handlers['B_OP'](op)
-                # always return here to avoid incrementing the IP register
-                return
+                skip = self.op_handlers['B_OP'](op)
             elif (op & self.BL_OP_MASK) == self.BL_OP:
-                self.op_handlers['BL_OP'](op)
-                # always return here to avoid incrementing the IP register
-                return
+                skip = self.op_handlers['BL_OP'](op)
             elif (op & self.LDM_OP_MASK) == self.LDM_OP:
-                self.op_handlers['LDM_OP'](op)
+                skip = self.op_handlers['LDM_OP'](op)
             elif (op & self.STM_OP_MASK) == self.STM_OP:
-                self.op_handlers['STM_OP'](op)
+                skip = self.op_handlers['STM_OP'](op)
             elif (op & self.PUSH_OP1_MASK) == self.PUSH_OP1:
-                self.op_handlers['PUSH_OP1'](op)
+                skip = self.op_handlers['PUSH_OP1'](op)
             elif (op & self.PUSH_OP2_MASK) == self.PUSH_OP2:
-                self.op_handlers['PUSH_OP2'](op)
+                skip = self.op_handlers['PUSH_OP2'](op)
             elif (op & self.POP_OP1_MASK) == self.POP_OP1:
-                self.op_handlers['POP_OP1'](op)
+                skip = self.op_handlers['POP_OP1'](op)
             elif (op & self.POP_OP2_MASK) == self.POP_OP2:
-                self.op_handlers['POP_OP2'](op)
+                skip = self.op_handlers['POP_OP2'](op)
             else:
                 raise NotImplementedOpCode()
         elif (op & self.DATA_PROCESSING_INS_MASK) == self.DATA_PROCESSING_INS:
             if (op & self.ADD_IMMEDIATE_OP_MASK) == self.ADD_IMMEDIATE_OP:
-                rd = (op & self.ADD_IMMEDIATE_RD) >> self.ADD_IMMEDIATE_RD_SHIFT
-                rn = (op & self.ADD_IMMEDIATE_RN) >> self.ADD_IMMEDIATE_RN_SHIFT
-                set_flags = op & self.ADD_IMMEDIATE_S
-                imm = op & self.ADD_IMMEDIATE_IMM
-                result, carry, overflow = self._AddWithCarry(self.register_read(rn).value, imm, 0)
-                
-                if rn == 0xF and not set_flags:
-                    #FIXME see ADR
-                    raise NotImplementedOpCode()
-                if rn == 0xD:
-                    #FIXME see ADD (SP plus immediate)
-                    raise NotImplementedOpCode()
-                    
-                if rd == 0xF and set_flags:
-                    #FIXME see SUBS PC, LR and related instructions.
-                    raise NotImplementedOpCode()
-                
-                self.register_write(rd, c_uint32(result))
-                if set_flags:
-                    self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
-                    self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
-                    self.cpsr.value |= carry and self.PROCESSOR_C
-                    self.cpsr.value |= overflow and self.PROCESSOR_V
-
+                skip = self.op_handlers['ADD_IMMEDIATE_OP'](op)
             elif (op & self.ADD_REGISTER_OP_MASK) == self.ADD_REGISTER_OP:
-                rd = (op & self.ADD_REGISTER_RD) >> self.ADD_REGISTER_RD_SHIFT
-                rn = (op & self.ADD_REGISTER_RN) >> self.ADD_REGISTER_RN_SHIFT
-                imm = (op & self.ADD_REGISTER_IMM) >> self.ADD_REGISTER_IMM_SHIFT
-                type = (op & self.ADD_REGISTER_TYPE) >> self.ADD_REGISTER_TYPE_SHIFT
-                shift_t, shift_n = self._DecodeImmShift(type, imm)
-                rm = op & self.ADD_REGISTER_RM
-                s = op & self.ADD_REGISTER_S
-                set_flags = (s != 0)
-                
-                if rd == 0xF and s:
-                    #FIXME see SUBS PC, LR and related instructions
-                    raise NotImplementedOpCode()
-                
-                if rn == 0xD:
-                    #FIXME see ADD (SP plus register)
-                    raise NotImplementedOpCode()
-    
-                carry = self.cpsr.value & self.PROCESSOR_C and 1
-                shifted = self._SHIFT(self.register_read(rm).value, shift_t, shift_n, carry)
-                result, carry, overflow = self._AddWithCarry(self.register_read(rn).value, shifted, 0)
-                
-                if rd == 0xF:
-                    # FIXME ALUWritePC
-                    raise NotImplementedOpCode()
-                else:
-                    self.register_write(rd, c_uint32(result))
-                    
-                    if set_flags:
-                        self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
-                        self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
-                        self.cpsr.value |= carry and self.PROCESSOR_C
-                        self.cpsr.value |= overflow and self.PROCESSOR_V       
+                skip = self.op_handlers['ADD_REGISTER_OP'](op)       
             elif (op & self.SUB_REGISTER_OP_MASK) == self.SUB_REGISTER_OP:
-                imm = (op & self.SUB_REGISTER_IMM) >> self.SUB_REGISTER_IMM_SHIFT
-                rn = (op & self.SUB_REGISTER_RN) >> self.SUB_REGISTER_RN_SHIFT
-                rd = (op & self.SUB_REGISTER_RD) >> self.SUB_REGISTER_RD_SHIFT
-                type = (op & self.SUB_REGISTER_TYPE) >> self.SUB_REGISTER_TYPE_SHIFT
-                rm = op & self.SUB_REGISTER_RM
-                s = op & self.SUB_REGISTER_S
-                set_flags = (s != 0)
-                shift_t, shift_n = self._DecodeImmShift(type, imm)
-                
-                if rd == 0xF and set_flags:
-                    #FIXME SUBS PC, LR and related instructions
-                    raise NotImplementedOpCode()
-                    
-                if rn == 0xD:
-                    #FIXME see SUB (SP minus register)
-                    raise NotImplementedOpCode()
-                
-                carry = self.cpsr.value & self.PROCESSOR_C and 1
-                shifted = self._SHIFT(self.register_read(rm).value, shift_t, shift_n, carry)
-                complemented_shifted = c_uint32(-shifted).value
-                result, carry, overflow = self._AddWithCarry(self.register_read(rn).value, complemented_shifted, 0)
-                
-                if rd == 0xF:
-                    #FIXME see ALUWritePC(result)
-                    raise NotImplementedOpCode()
-                else:
-                    self.register_write(rd, c_uint32(result))
-                    if set_flags:
-                        self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
-                        self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
-                        self.cpsr.value |= carry and self.PROCESSOR_C
-                        self.cpsr.value |= overflow and self.PROCESSOR_V
+                skip = self.op_handlers['SUB_REGISTER_OP'](op)
             elif (op & self.SUB_IMMEDIATE_OP_MASK) == self.SUB_IMMEDIATE_OP:
-                imm = op & self.SUB_IMMEDIATE_IMM
-                rn = (op & self.SUB_IMMEDIATE_RN) >> self.SUB_IMMEDIATE_RN_SHIFT
-                rd = (op & self.SUB_IMMEDIATE_RD) >> self.SUB_IMMEDIATE_RD_SHIFT
-                set_flags = ((op & self.SUB_IMMEDIATE_S) != 0)
-                imm = self._ARMExpandImm(imm)
-                
-                if rd == 0xF and set_flags:
-                    #FIXME SUBS PC, LR and related instructions
-                    raise NotImplementedOpCode()
-                    
-                if rn == 0xD:
-                    #FIXME see SUB (SP minus register)
-                    raise NotImplementedOpCode()
-
-                result, carry, overflow = self._AddWithCarry(self.register_read(rn).value, self._NOT(imm), 1)
-                
-                if rd == 0xF:
-                    #FIXME see ALUWritePC(result)
-                    raise NotImplementedOpCode()
-                else:
-                    self.register_write(rd, c_uint32(result))
-                    if set_flags:
-                        self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
-                        self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
-                        self.cpsr.value |= carry and self.PROCESSOR_C
-                        self.cpsr.value |= overflow and self.PROCESSOR_V
+                skip = self.op_handlers['SUB_IMMEDIATE_OP'](op)
             elif (op & self.BFC_OP_MASK) == self.BFC_OP:
                 rd = (op & self.BFC_RD) >> self.BFC_RD_SHIFT
                 msbit = (op & self.BFC_MSB) >> self.BFC_MSB_SHIFT
@@ -1795,28 +2065,12 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 rd_value = self.register_read(rd).value
                 masked_value = rd_value & mask
                 self.register_write(rd,c_uint32(masked_value))
-                
             elif (op & self.CMP_REGISTER_OP_MASK) == self.CMP_REGISTER_OP:
-                self.op_handlers['CMP_REGISTER_OP'](op)
+                skip = self.op_handlers['CMP_REGISTER_OP'](op)
             elif (op & self.CMP_IMMEDIATE_OP_MASK) == self.CMP_IMMEDIATE_OP:
-                self.op_handlers['CMP_IMMEDIATE_OP'](op)
+                skip = self.op_handlers['CMP_IMMEDIATE_OP'](op)
             elif (op & self.MOV_IMMEDIATE_OP1_MASK) == self.MOV_IMMEDIATE_OP1:
-                # FIXME
-                rd = (op & self.MOV_IMMEDIATE_OP1_RD) >> self.MOV_IMMEDIATE_OP1_RD_SHIFT
-                s = op & self.MOV_IMMEDIATE_OP1_S
-                set_flags = (s!=0)
-                imm = op & self.MOV_IMMEDIATE_OP1_IMM
-                carry = self.cpsr.value & self.PROCESSOR_C and 1
-                result, carry = self._ARMExpandImm_C(imm, carry)
-                if rd == 0xF:
-                    #FIXME see ALUWritePC(result)
-                    raise NotImplementedOpCode()
-                else:
-                    self.register_write(rd, c_uint32(result))
-                    if set_flags:
-                        self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
-                        self.cpsr.value |= (result == 0) and self.PROCESSOR_Z
-                        self.cpsr.value |= carry and self.PROCESSOR_C
+                skip = self.op_handlers['MOV_IMMEDIATE_OP1'](op)
             elif (op & self.MOV_IMMEDIATE_OP2_MASK) == self.MOV_IMMEDIATE_OP2:
                 rd = (op & self.MOV_IMMEDIATE_OP1_RD) >> self.MOV_IMMEDIATE_OP1_RD_SHIFT
                 imm1 = op & self.MOV_IMMEDIATE_OP1_IMM
@@ -1824,69 +2078,60 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                 imm = imm1 | imm2
                 
                 if rd == 0xF:
-                    raise Unpredictable
+                    raise Unpredictable()
                 else:
                     self.register_write(rd, c_uint32(imm))
             elif (op & self.MOV_REGISTER_OP_MASK) == self.MOV_REGISTER_OP:
-                rd = (op & self.MOV_REGISTER_RD) >> self.MOV_REGISTER_RD_SHIFT
-                rm = op & self.MOV_REGISTER_RM
-                s = op & self.MOV_REGISTER_S
-                set_flags = (s != 0)
-                result = self.register_read(rm)
-                if rd == 0xF:
-                    #FIXME see ALUWritePC(result)
-                    raise NotImplementedOpCode()
-                else:
-                    self.register_write(rd, result)
-                    if set_flags:
-                        self.cpsr.value |= (result.value & 0x80000000) and self.PROCESSOR_N
-                        self.cpsr.value |= (result.value == 0) and self.PROCESSOR_Z
+                skip = self.op_handlers['MOV_REGISTER_OP'](op)
             elif (op & self.LSL_IMMEDIATE_OP_MASK) == self.LSL_IMMEDIATE_OP:
-                self.op_handlers['LSL_IMMEDIATE_OP'](op)
+                skip = self.op_handlers['LSL_IMMEDIATE_OP'](op)
             elif (op & self.LSR_IMMEDIATE_OP_MASK) == self.LSR_IMMEDIATE_OP:
-                self.op_handlers['LSR_IMMEDIATE_OP'](op)
+                skip = self.op_handlers['LSR_IMMEDIATE_OP'](op)
             elif (op & self.ORR_IMMEDIATE_OP_MASK) == self.ORR_IMMEDIATE_OP:
-                self.op_handlers['ORR_IMMEDIATE_OP'](op)
+                skip = self.op_handlers['ORR_IMMEDIATE_OP'](op)
             elif (op & self.ORR_REGISTER_OP_MASK) == self.ORR_REGISTER_OP:
-                self.op_handlers['ORR_REGISTER_OP'](op)
+                skip = self.op_handlers['ORR_REGISTER_OP'](op)
             elif (op & self.ORR_REGISTER_SH_OP_MASK) == self.ORR_REGISTER_SH_OP:
-                self.op_handlers['ORR_REGISTER_SH_OP'](op)
+                skip = self.op_handlers['ORR_REGISTER_SH_OP'](op)
+            elif (op & self.AND_REGISTER_OP_MASK) == self.AND_REGISTER_OP:
+                skip = self.op_handlers['AND_REGISTER_OP'](op)
+            elif (op & self.AND_IMMEDIATE_OP_MASK) == self.AND_IMMEDIATE_OP:
+                skip = self.op_handlers['AND_IMMEDIATE_OP'](op)
             elif (op & self.TST_IMMEDIATE_OP_MASK) == self.TST_IMMEDIATE_OP:
-                self.op_handlers['TST_IMMEDIATE_OP'](op)
+                skip = self.op_handlers['TST_IMMEDIATE_OP'](op)
             elif (op & self.MVN_IMMEDIATE_OP_MASK) == self.MVN_IMMEDIATE_OP:
-                self.op_handlers['MVN_IMMEDIATE_OP'](op)
+                skip = self.op_handlers['MVN_IMMEDIATE_OP'](op)
             elif (op & self.MVN_REGISTER_SH_OP_MASK) == self.MVN_REGISTER_SH_OP:
-                self.op_handlers['MVN_REGISTER_SH_OP'](op)
+                skip = self.op_handlers['MVN_REGISTER_SH_OP'](op)
             elif (op & self.BIC_IMMEDIATE_OP_MASK) == self.BIC_IMMEDIATE_OP:
-                self.op_handlers['BIC_IMMEDIATE_OP'](op)
+                skip = self.op_handlers['BIC_IMMEDIATE_OP'](op)
             elif (op & self.BIC_REGISTER_SH_OP_MASK) == self.BIC_REGISTER_SH_OP:
-                self.op_handlers['BIC_REGISTER_SH_OP'](op)
+                skip = self.op_handlers['BIC_REGISTER_SH_OP'](op)
             elif (op & self.MRS_OP_MASK) == self.MRS_OP:
-                self.op_handlers['MRS_OP'](op)
+                skip = self.op_handlers['MRS_OP'](op)
             elif (op & self.MSR_REGISTER_OP_MASK) == self.MSR_REGISTER_OP:
-                self.op_handlers['MSR_REGISTER_OP'](op)
+                skip = self.op_handlers['MSR_REGISTER_OP'](op)
             elif (op & self.BX_OP_MASK) == self.BX_OP:
-                self.op_handlers['BX_OP'](op)
-                return
+                skip = self.op_handlers['BX_OP'](op)
             else:
                 raise NotImplementedOpCode()
         elif (op & self.SVC_COPROC_INS_MASK) == self.SVC_COPROC_INS: 
             if (op & self.SVC_OP_MASK) == self.SVC_OP:
                 imm = op & self.SVC_IMM # Not used at all.
                 self.interrupt_triggered(self.IRQ_SVC)
-                return
+                skip = False
             elif (op & self.MCR_OP_MASK) == self.MCR_OP:
-                self.op_handlers['MCR_OP'](op)
+                skip = self.op_handlers['MCR_OP'](op)
             elif (op & self.MRC_OP_MASK) == self.MRC_OP:    
-                self.op_handlers['MRC_OP'](op)
+                skip = self.op_handlers['MRC_OP'](op)
             else:
                 raise NotImplementedOpCode()
         else:
             raise InvalidInstructionOpCode()
         
-        self.next_op()
-        
-    
+        if not skip:
+            self.next_op()
+
     
     def _SignExtend26to32(self, imm):
         sign = ((imm & (1 << 25)) != 0)
@@ -2056,6 +2301,17 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
         overflow = 0 if result == c_int32(signed_sum).value else 1
         return (result, carry_out, overflow)
     
+    def _LoadWritePC(self, address):
+        self._BXWritePC(address)
+        
+    def _ALUWritePC(self, address):
+        thumb = self.cpsr.value & self.PROCESSOR_THUMB
+        if not thumb:
+            self._BXWritePC(address)
+        else:
+            #FIXME: BranchWritePC
+            raise NotImplementedOpCode()
+        
     def _BXWritePC(self, address):
         if address.value & 1:
             raise NotImplementedInstructionSet()

@@ -45,6 +45,9 @@ class OMAP4(object):
         #emif2
         self.sys_bus.attach_slave(self.emif2_registers, memory_map.EMIF2_REGISTERS_START, memory_map.EMIF2_REGISTERS_END)
         
+        
+        #FIXME: Set those properly.
+        
         #l4_cfg domain
         self.sys_bus.attach_slave(self.l4_cfg_domain, memory_map.L4_CFG_DOMAIN_START, memory_map.L4_CFG_DOMAIN_END)
         
