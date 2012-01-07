@@ -7,18 +7,26 @@ from buses.simple_bus import SimpleBus
 from soc.omap4 import memory_map
 from ctypes import c_uint32
 
+import threading
+import global_env
 import logging
 import os
 
 CUR_PATH        = os.path.dirname(os.path.abspath(__file__))
 ROM_PATH        = os.path.join(CUR_PATH, "rom.o")
 RAM_VECS_PATH   = os.path.join(CUR_PATH, "ram_vecs.o")
-TINYOS_PATH     = "../examples/tinyos/output.bin"
+TINYOS_PATH     = None
 
-class OMAP4(object):
+class OMAP4(threading.Thread):
     CHItems = ['CHSETTINGS', 'CHRAM', 'CHFLASH', 'CHMMCSD']
     
     def __init__(self):
+        threading.Thread.__init__(self)
+
+    def boot(self):
+        self.start()
+        
+    def run(self):
         # Create a nand device "nand"
         self.sys_bus = SimpleBus('system bus')
         
@@ -53,14 +61,18 @@ class OMAP4(object):
         
         self.mpu = CORTEXA9MPU('OMAP4 cortex-a9 mpu', self.sys_bus)
         
-        
-    def boot(self):
+        # Now start it.
         self.mpu.boot()
-
+    
+    def stop(self):
+        self.mpu.stop()
+        
+    def get_info(self):
+        return self.mpu.get_info()
 
 class CORTEXA9MPU(object):
     def __init__(self, name, bus):
-        self.cpu0 = ARMCortexA9('arm cortex a9', bus)
+        global_env.main_cpu = self.cpu0 = ARMCortexA9('arm cortex a9', bus)
         self.bus = bus
         
     def boot(self):
@@ -114,3 +126,10 @@ class CORTEXA9MPU(object):
         self.cpu0.register_write(0, c_uint32(boot_struct_address))
         self.cpu0.set_ip(c_uint32(memory_map.L3_OCM_RAM_START))
         self.cpu0.run()
+    
+    def stop(self):
+        self.cpu0.stop()
+        
+    def get_info(self):
+        info = self.cpu0.get_info()
+        return info

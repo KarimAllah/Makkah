@@ -3,6 +3,7 @@ import threading
 import global_env
 from ctypes import c_uint32, c_uint64, c_int32
 from controllers.interfaces import AbstractInterruptConsumer
+import sys
 
 INITIAL_IP = c_uint32(0x0)
 CPSR_RESET = c_uint32(0x0)
@@ -494,6 +495,9 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
         self.init_registers()
         self.init_interrupts()
         self.init_ophandlers()
+        
+    def get_name(self):
+        return self.name
     
     PAGEDIR_TYPE_MASK   = 0x00003
     DOMAIN_MASK         = 0x1E0
@@ -1604,7 +1608,36 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                     self.cpsr.value |= (result.value & 0x80000000) and self.PROCESSOR_N
                     self.cpsr.value |= (result.value == 0) and self.PROCESSOR_Z
             return skip
+        
+        def def_BFC_OP(op):
+            rd = (op & self.BFC_RD) >> self.BFC_RD_SHIFT
+            msbit = (op & self.BFC_MSB) >> self.BFC_MSB_SHIFT
+            lsbit = (op & self.BFC_LSB) >> self.BFC_LSB_SHIFT
             
+            if rd == 0xF:
+                raise Unpredictable()
+            
+            msb_mask = (1 << (msbit+1)) - 1
+            lsb_mask = (1 << lsbit) - 1
+            complemented_mask = (msb_mask - lsb_mask)
+            mask = c_uint32(~complemented_mask).value
+            rd_value = self.register_read(rd).value
+            masked_value = rd_value & mask
+            self.register_write(rd,c_uint32(masked_value))
+            return False
+        
+        def def_MOV_IMMEDIATE_OP2(op):
+            rd = (op & self.MOV_IMMEDIATE_OP1_RD) >> self.MOV_IMMEDIATE_OP1_RD_SHIFT
+            imm1 = op & self.MOV_IMMEDIATE_OP1_IMM
+            imm2 = (op & self.MOV_IMMEDIATE_OP2_IMM) >> 4
+            imm = imm1 | imm2
+            
+            if rd == 0xF:
+                raise Unpredictable()
+            else:
+                self.register_write(rd, c_uint32(imm))
+
+
         self.op_handlers = {            
                             'LDR_LITERAL_OP'    : def_LDR_LITERAL_OP,
                             'LDR_IMMEDIATE_OP'  : def_LDR_IMMEDIATE_OP,
@@ -1612,6 +1645,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                             'LDR_REGISTER_OP'   : def_LDR_REGISTER_OP,
                             'STR_IMMEDIATE_OP'  : def_STR_IMMEDIATE_OP,
                             'STR_REGISTER_OP'   : def_STR_REGISTER_OP,
+                            'BFC_OP'            : def_BFC_OP,
                             'B_OP'              : def_B_OP,
                             'BL_OP'             : def_BL_OP,
                             'BX_OP'             : def_BX_OP,
@@ -1644,6 +1678,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                             'LSR_IMMEDIATE_OP'  : def_LSR_IMMEDIATE_OP,
                             'LSL_IMMEDIATE_OP'  : def_LSL_IMMEDIATE_OP,
                             'MOV_IMMEDIATE_OP1' : def_MOV_IMMEDIATE_OP1,
+                            'MOV_IMMEDIATE_OP2' : def_MOV_IMMEDIATE_OP2,
                             'MOV_REGISTER_OP'   : def_MOV_REGISTER_OP
                             }
         
@@ -1954,19 +1989,16 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     #
     SVC_COPROC_INS_MASK         = 0x0C000000
     SVC_COPROC_INS              = 0x0C000000
-    
     def execute(self):
         self._TakeException()
         skip = False
         self.op = op = self.fetch_next_op()
-        
-        if global_env.STEPPING:
-            for callback in global_env.STEPPING_callacks:
-                callback(self)
-                
-        if op in global_env.IMPORTANT_ops or self.ip.value in global_env.IMPORTANT_IPs:
-            for callback in global_env.IMPORTANT_callbacks:
-                callback(self)
+
+        global_env.dbg_event.wait()
+        if global_env.STEPPING or op in global_env.GDB_ops or self.ip.value in global_env.GDB_IPs:
+            global_env.dbg_breakpoint_hit = True
+            global_env.dbg_event.clear()
+            global_env.dbg_event.wait()
         
         condition = (op & self.CONDITION_MASK) >> self.CONDITION_MASK_SHIFT
         
@@ -2020,7 +2052,6 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             elif (op & self.STR_REGISTER_OP_MASK) == self.STR_REGISTER_OP:
                 skip = self.op_handlers['STR_REGISTER_OP'](op)
             else:
-                import ipdb;ipdb.set_trace()
                 raise NotImplementedOpCode()
         elif (op & self.BRANCH_INS_MASK) == self.BRANCH_INS:
             if (op & self.B_OP_MASK) == self.B_OP:
@@ -2051,20 +2082,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             elif (op & self.SUB_IMMEDIATE_OP_MASK) == self.SUB_IMMEDIATE_OP:
                 skip = self.op_handlers['SUB_IMMEDIATE_OP'](op)
             elif (op & self.BFC_OP_MASK) == self.BFC_OP:
-                rd = (op & self.BFC_RD) >> self.BFC_RD_SHIFT
-                msbit = (op & self.BFC_MSB) >> self.BFC_MSB_SHIFT
-                lsbit = (op & self.BFC_LSB) >> self.BFC_LSB_SHIFT
-                
-                if rd == 0xF:
-                    raise Unpredictable()
-                
-                msb_mask = (1 << (msbit+1)) - 1
-                lsb_mask = (1 << lsbit) - 1
-                complemented_mask = (msb_mask - lsb_mask)
-                mask = c_uint32(~complemented_mask).value
-                rd_value = self.register_read(rd).value
-                masked_value = rd_value & mask
-                self.register_write(rd,c_uint32(masked_value))
+                skip = self.op_handlers['BFC_OP'](op)
             elif (op & self.CMP_REGISTER_OP_MASK) == self.CMP_REGISTER_OP:
                 skip = self.op_handlers['CMP_REGISTER_OP'](op)
             elif (op & self.CMP_IMMEDIATE_OP_MASK) == self.CMP_IMMEDIATE_OP:
@@ -2072,15 +2090,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             elif (op & self.MOV_IMMEDIATE_OP1_MASK) == self.MOV_IMMEDIATE_OP1:
                 skip = self.op_handlers['MOV_IMMEDIATE_OP1'](op)
             elif (op & self.MOV_IMMEDIATE_OP2_MASK) == self.MOV_IMMEDIATE_OP2:
-                rd = (op & self.MOV_IMMEDIATE_OP1_RD) >> self.MOV_IMMEDIATE_OP1_RD_SHIFT
-                imm1 = op & self.MOV_IMMEDIATE_OP1_IMM
-                imm2 = (op & self.MOV_IMMEDIATE_OP2_IMM) >> 4
-                imm = imm1 | imm2
-                
-                if rd == 0xF:
-                    raise Unpredictable()
-                else:
-                    self.register_write(rd, c_uint32(imm))
+                skip = self.op_handlers['MOV_IMMEDIATE_OP2'](op)
             elif (op & self.MOV_REGISTER_OP_MASK) == self.MOV_REGISTER_OP:
                 skip = self.op_handlers['MOV_REGISTER_OP'](op)
             elif (op & self.LSL_IMMEDIATE_OP_MASK) == self.LSL_IMMEDIATE_OP:
@@ -2638,7 +2648,18 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     
     def next_op(self):
         self.set_ip(c_uint32(self.ip.value + self.word_size))
-        
+    
+    _stopped = False
     def run(self):
         while True:
+            if self._stopped:
+                sys.exit(0)
+
             self.execute()
+    
+    def stop(self):
+        self._stopped = True
+    
+    def get_info(self):
+        return '''Instruction pointer    : %s
+Opcode    : %s''' % (hex(self.ip.value), hex(self.op))

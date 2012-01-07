@@ -1,0 +1,1 @@
+python launch.py -p /Data/Sources/kernels/x-loader/x-load.bin -s -gdb 20005
