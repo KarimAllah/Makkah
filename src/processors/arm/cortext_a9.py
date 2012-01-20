@@ -1,7 +1,7 @@
 import logging
 import threading
 import global_env
-from ctypes import c_uint32, c_uint64, c_int32
+from ctypes import c_uint32, c_uint64, c_int32, c_int64
 from controllers.interfaces import AbstractInterruptConsumer
 import sys
 
@@ -217,7 +217,15 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     SUB_IMMEDIATE_RD        = 0x0000F000
     SUB_IMMEDIATE_RD_SHIFT  = 12
     SUB_IMMEDIATE_IMM       = 0x00000FFF
-    SUB_IMMEDIATE_S         = 0x001FFFFF
+    SUB_IMMEDIATE_S         = 0x00100000
+    
+    # ADR #FIXME ( two forms )
+    SUB_IMMEDIATE_OP_MASK   = 0x0F7F0000
+    SUB_IMMEDIATE_OP        = 0x024F0000
+    SUB_IMMEDIATE_RD        = 0x0000F000
+    SUB_IMMEDIATE_RD_SHIFT  = 12
+    SUB_IMMEDIATE_IMM       = 0x00000FFF
+    SUB_IMMEDIATE_ADD       = 0x00800000
 
     # Bit
     BFC_OP_MASK             = 0x0FE0007F
@@ -911,7 +919,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
 
         def def_STM_OP(op):
             w = op & self.LDM_W
-            register_list = op & self.STM_OP
+            register_list = op & self.STM_REGISTERS
             bit_count = self._BitCount(register_list)
             rn = (op & self.STM_RN) >> self.STM_RN_SHIFT
             if rn == 0xF or bit_count < 1:
@@ -1022,7 +1030,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             shift_t, shift_n = self._DecodeImmShift(type, imm)
             carry = self.cpsr.value & self.PROCESSOR_C and 1
             shifted = self._SHIFT(self.register_read(rm).value, shift_t, shift_n, carry)
-            complemented_shifted = c_uint32(-shifted).value
+            complemented_shifted = c_uint64(-shifted).value
             result, carry, overflow = self._AddWithCarry(self.register_read(rn).value, complemented_shifted, 0)
             
             self.cpsr.value |= (result & 0x80000000) and self.PROCESSOR_N
@@ -1557,8 +1565,17 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             if rn == 0xD:
                 #FIXME see SUB (SP minus register)
                 raise NotImplementedOpCode()
-
-            result, carry, overflow = self._AddWithCarry(self.register_read(rn).value, self._NOT(imm), 1)
+            
+            if rn == 0xF and not set_flags:
+                # FIXME: see ADR ( tmp hack for now)
+                tmp = (op & 0x00C00000) >> 22
+                if tmp == 1:
+                    add = False
+                elif tmp == 2:
+                    add = True
+                result = (self.get_ip() + imm) if add else (self.get_ip() - imm)
+            else:
+                result, carry, overflow = self._AddWithCarry(self.register_read(rn).value, self._NOT(imm), 1)
             
             if rd == 0xF:
                 self._ALUWritePC(c_uint32(result))
@@ -1892,7 +1909,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
             if secure:
                 A, MODE = 1, self.processor_modes['irq']
                 if irq:
-                    F, MODE = 1, 1, self.processor_modes['monitor'] 
+                    F, MODE = 1, self.processor_modes['monitor'] 
             else:
                 MODE = self.processor_modes['irq']
                 if irq:
@@ -1914,7 +1931,7 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
                         MODE = self.processor_modes['monitor']
                         A = 1
                         if fw:
-                            F = 1, 1
+                            F = 1
                     else:
                         if fw:
                             F = 1
@@ -2305,10 +2322,10 @@ class ARMCortexA9(threading.Thread, AbstractInterruptConsumer):
     
     def _AddWithCarry(self, op1, op2, carry_in):
         unsigned_sum = op1 + op2 + carry_in
-        signed_sum = c_int32(op1).value + c_int32(op2).value + carry_in
+        signed_sum = c_int64(op1).value + c_int64(op2).value + carry_in
         result = unsigned_sum & ((1 << 31) - 1)
         carry_out = 0 if result == unsigned_sum else 1
-        overflow = 0 if result == c_int32(signed_sum).value else 1
+        overflow = 0 if result == c_int64(signed_sum).value else 1
         return (result, carry_out, overflow)
     
     def _LoadWritePC(self, address):

@@ -2,11 +2,21 @@
 .globl _start
 
 _start:
+	mov r1, #1
+	mov r2, #2
+	cmp r2, r1
+	bgt first_test
+	cmp r1, r2
+	blt second_test
 	mov r5, #1
 	mov r6, #2
 	orr r7, r5, r6
 	orr r6, r5, #2
 	lsl r5, r5, #3
+first_test:
+	b	.
+second_test:
+	b	.
 	lsr r5, r5, #3
 	cmp r1, r6
 	bl  myself
